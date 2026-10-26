@@ -102,11 +102,8 @@ func (r *Request) Description() string {
 	return desc
 }
 
-// Prepare installs missing SDK packages and writes the AVD. A new AVD's first
-// instance creates its disk images, and on Linux a second instance that starts
-// meanwhile fails to lock them, so Prepare reports a first boot until an
-// instance has booted.
-func (r *Request) Prepare(ctx context.Context) (bool, error) {
+// Prepare installs missing SDK packages, writes the AVD, and primes a new AVD.
+func (r *Request) Prepare(ctx context.Context) error {
 	var missing [][]string
 	for _, pkg := range [][]string{
 		{"platform-tools"},
@@ -120,17 +117,46 @@ func (r *Request) Prepare(ctx context.Context) (bool, error) {
 	if len(missing) > 0 {
 		fmt.Fprintf(r.Log, "devices-cli: installing %d Android SDK package(s) into %s\n", len(missing), r.SDK.Root)
 		if err := r.SDK.install(ctx, r.Log, missing); err != nil {
-			return false, err
+			return err
 		}
 	}
 	if err := writeDefinition(r.Definition(), r.API, r.Variant, r.ABI); err != nil {
-		return false, err
+		return err
 	}
-	marker, err := bootedMarker(r.Definition())
+	marker, err := primedMarker(r.Definition())
+	if err != nil || fileExists(marker) {
+		return err
+	}
+	if err := r.prime(ctx); err != nil {
+		return err
+	}
+	return os.WriteFile(marker, nil, 0o644)
+}
+
+// prime boots a new AVD once and stops it. The first instance of an AVD
+// creates its disk images and keeps them locked for as long as it runs, and on
+// Linux every other instance then fails to start, so that first instance must
+// not be one that an owner uses. Its ports lie above the instances' range, so
+// it needs no state lock.
+func (r *Request) prime(ctx context.Context) error {
+	port := 0
+	for p := lastPort + 2; p <= lastPort+100; p += 2 {
+		if bindable(p) && bindable(p+1) {
+			port = p
+			break
+		}
+	}
+	if port == 0 {
+		return fmt.Errorf("no free emulator console port above %d to set up %s", lastPort, r.Definition())
+	}
+	fmt.Fprintf(r.Log, "devices-cli: booting new AVD %s once to set it up\n", r.Definition())
+	inst, err := r.launch(port, filepath.Join(r.LogDir, "prime-"+r.Definition()+".log"), nil)
 	if err != nil {
-		return false, err
+		return err
 	}
-	return !fileExists(marker), nil
+	// Also stops the emulator when devices-cli is interrupted.
+	defer func() { _ = Kind{}.Stop(context.WithoutCancel(ctx), inst) }()
+	return r.WaitReady(ctx, inst)
 }
 
 // Start launches a read-only emulator on the first free console port.
@@ -139,10 +165,25 @@ func (r *Request) Start(_ context.Context, owner string, running []state.Instanc
 	if err != nil {
 		return state.Instance{}, err
 	}
+	inst, err := r.launch(port, filepath.Join(r.LogDir, fmt.Sprintf("emulator-%d.log", port)), r.Args)
+	if err != nil {
+		return state.Instance{}, err
+	}
+	now := time.Now()
+	inst.Owner = owner
+	inst.Key = r.Key()
+	inst.Description = r.Description()
+	inst.Started = now
+	inst.LastUsed = now
+	return inst, nil
+}
+
+// launch starts a read-only emulator of the AVD on a console port, logging to
+// logPath, which it replaces.
+func (r *Request) launch(port int, logPath string, extra []string) (state.Instance, error) {
 	if err := os.MkdirAll(r.LogDir, 0o755); err != nil {
 		return state.Instance{}, err
 	}
-	logPath := filepath.Join(r.LogDir, fmt.Sprintf("emulator-%d.log", port))
 	logFile, err := os.Create(logPath)
 	if err != nil {
 		return state.Instance{}, err
@@ -161,7 +202,7 @@ func (r *Request) Start(_ context.Context, owner string, running []state.Instanc
 		"-no-snapshot",
 		"-no-metrics",
 	}
-	cmd := exec.Command(r.SDK.emulatorPath(), append(args, r.Args...)...)
+	cmd := exec.Command(r.SDK.emulatorPath(), append(args, extra...)...)
 	cmd.Env = append(os.Environ(), "ANDROID_HOME="+r.SDK.Root, "ANDROID_SDK_ROOT="+r.SDK.Root, "ADB_MDNS=0")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -172,20 +213,13 @@ func (r *Request) Start(_ context.Context, owner string, running []state.Instanc
 		return state.Instance{}, fmt.Errorf("start emulator: %w", err)
 	}
 	go func() { _ = cmd.Wait() }()
-
-	now := time.Now()
 	return state.Instance{
-		Owner:       owner,
-		Kind:        KindName,
-		Key:         r.Key(),
-		Definition:  r.Definition(),
-		Description: r.Description(),
-		ID:          fmt.Sprintf("emulator-%d", port),
-		PID:         cmd.Process.Pid,
-		Port:        port,
-		Log:         logPath,
-		Started:     now,
-		LastUsed:    now,
+		Kind:       KindName,
+		Definition: r.Definition(),
+		ID:         fmt.Sprintf("emulator-%d", port),
+		PID:        cmd.Process.Pid,
+		Port:       port,
+		Log:        logPath,
 	}, nil
 }
 
@@ -216,11 +250,7 @@ func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 			return fmt.Errorf("emulator %s exited before it booted%s", inst.ID, logTail(inst.Log))
 		}
 		if out, err := r.SDK.adb(ctx, "-s", inst.ID, "shell", "getprop", "sys.boot_completed"); err == nil && out == "1" {
-			marker, err := bootedMarker(inst.Definition)
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(marker, nil, 0o644)
+			return nil
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("emulator %s did not boot within %s%s", inst.ID, r.BootTimeout, logTail(inst.Log))
@@ -320,11 +350,7 @@ func (Kind) Stop(_ context.Context, inst state.Instance) error {
 			return fmt.Errorf("process group %d survived SIGKILL", inst.PID)
 		}
 	}
-	if inst.Log != "" {
-		if err := os.Remove(inst.Log); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
+	// The log stays for diagnosis until the next emulator on its port.
 	return nil
 }
 

@@ -82,7 +82,9 @@ Each system image gets one machine-wide AVD, named
 on first use. Every worktree runs its own read-only instance of it: the instance
 keeps its writes in temporary files that go away when it stops, so instances
 never change the AVD and no worktree accumulates disk. Instances cold-boot,
-which takes about 30 seconds on an Apple silicon laptop.
+which takes about 30 seconds on an Apple silicon laptop. A new AVD first boots
+once on its own to set up its disk images, which adds one boot to the first
+`get` that uses it.
 
 On Linux, emulators need KVM; on a GitHub Actions runner, enable it first:
 

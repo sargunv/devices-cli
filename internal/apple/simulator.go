@@ -170,7 +170,7 @@ func (r *Request) Description() string {
 func (r *Request) Definition() string { return "" }
 
 // Prepare implements devices.Request; NewRequest already found the runtime.
-func (r *Request) Prepare(context.Context) (bool, error) { return false, nil }
+func (r *Request) Prepare(context.Context) error { return nil }
 
 // Start creates the owner's simulator and boots it. The simulator is booted
 // before Start returns, so other commands see it as alive.
@@ -196,17 +196,27 @@ func (r *Request) Start(ctx context.Context, owner string, _ []state.Instance) (
 	}, nil
 }
 
-// WaitReady waits until the simulator has finished booting.
+// WaitReady waits until the simulator has finished booting. One bootstatus
+// call can miss the boot and wait forever, so each call has a deadline and a
+// new call asks again.
 func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
-	ctx, cancel := context.WithTimeout(ctx, r.BootTimeout)
-	defer cancel()
-	if _, err := simctl(ctx, "bootstatus", inst.ID); err != nil {
-		if ctx.Err() != nil {
+	deadline := time.Now().Add(r.BootTimeout)
+	for {
+		callCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		_, err := simctl(callCtx, "bootstatus", inst.ID)
+		timedOut := errors.Is(callCtx.Err(), context.DeadlineExceeded)
+		cancel()
+		switch {
+		case err == nil:
+			return nil
+		case ctx.Err() != nil:
+			return ctx.Err()
+		case !timedOut:
+			return err
+		case time.Now().After(deadline):
 			return fmt.Errorf("simulator %s did not boot within %s", inst.ID, r.BootTimeout)
 		}
-		return err
 	}
-	return nil
 }
 
 // Kind manages Apple simulator instances.

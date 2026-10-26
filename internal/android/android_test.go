@@ -26,12 +26,15 @@ case "$*" in
 esac
 `
 
+// The emulator logs its arguments and runs until it is stopped.
 const fakeEmulator = `#!/bin/sh
+echo "$@" >> "$(dirname "$0")/../launches"
 trap 'exit 0' TERM
 while :; do sleep 0.1; done
 `
 
-// The android CLI creates each package's directory and logs its arguments.
+// The android CLI creates each package's directory, installs the fake
+// emulator, and logs its arguments.
 const fakeAndroidCLI = `#!/bin/sh
 echo "$@" >> "$(dirname "$0")/calls"
 sdk=
@@ -39,6 +42,7 @@ for arg; do
   case "$arg" in
     --sdk=*) sdk=${arg#--sdk=} ;;
     sdk|install) ;;
+    emulator) mkdir -p "$sdk/emulator" && cp "$(dirname "$0")/emulator.fake" "$sdk/emulator/emulator" ;;
     *) mkdir -p "$sdk/$arg" ;;
   esac
 done
@@ -62,6 +66,7 @@ func fakeSDK(t *testing.T) SDK {
 	writeScript(t, filepath.Join(root, "platform-tools", "adb"), fakeADB)
 	writeScript(t, filepath.Join(root, "emulator", "emulator"), fakeEmulator)
 	writeScript(t, filepath.Join(root, "cmdline-tools", "latest", "bin", "android"), fakeAndroidCLI)
+	writeScript(t, filepath.Join(root, "cmdline-tools", "latest", "bin", "emulator.fake"), fakeEmulator)
 	t.Setenv("ANDROID_AVD_HOME", t.TempDir())
 	return SDK{Root: root}
 }
@@ -74,19 +79,27 @@ func newRequest(t *testing.T, sdk SDK) *Request {
 	}
 }
 
-func TestPrepareInstallsMissingPackagesAndWritesTheAVD(t *testing.T) {
+func TestPrepareInstallsPackagesAndPrimesTheAVD(t *testing.T) {
 	sdk := fakeSDK(t)
 	if err := os.RemoveAll(filepath.Join(sdk.Root, "emulator")); err != nil {
 		t.Fatal(err)
 	}
 	req := newRequest(t, sdk)
 
-	firstBoot, err := req.Prepare(t.Context())
+	if err := req.Prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := req.Prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	launches, err := os.ReadFile(filepath.Join(sdk.Root, "launches"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !firstBoot {
-		t.Error("a new AVD does not report a first boot")
+	if lines := strings.Split(strings.TrimSpace(string(launches)), "\n"); len(lines) != 1 ||
+		!strings.Contains(lines[0], "-avd "+req.Definition()+" -read-only -port "+strconv.Itoa(lastPort+2)) {
+		t.Errorf("emulator launches:\n%s\nwant one read-only launch above the instances' ports", launches)
 	}
 
 	calls, err := os.ReadFile(filepath.Join(sdk.Root, "cmdline-tools", "latest", "bin", "calls"))
@@ -116,7 +129,7 @@ func TestEmulatorLifecycle(t *testing.T) {
 	req := newRequest(t, sdk)
 	req.Args = []string{"-gpu", "swiftshader"}
 	running := []state.Instance{{Port: firstPort}}
-	if _, err := req.Prepare(t.Context()); err != nil {
+	if err := req.Prepare(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -133,9 +146,6 @@ func TestEmulatorLifecycle(t *testing.T) {
 	if err := req.WaitReady(t.Context(), inst); err != nil {
 		t.Fatal(err)
 	}
-	if firstBoot, err := req.Prepare(t.Context()); err != nil || firstBoot {
-		t.Errorf("after a boot, Prepare reports a first boot: %v, %v", firstBoot, err)
-	}
 
 	other := inst
 	other.Port += 2
@@ -148,9 +158,6 @@ func TestEmulatorLifecycle(t *testing.T) {
 	}
 	if alive(inst) {
 		t.Error("emulator is alive after Stop")
-	}
-	if _, err := os.Stat(inst.Log); !os.IsNotExist(err) {
-		t.Errorf("log %s remains after Stop", inst.Log)
 	}
 	if err := (Kind{}).Stop(t.Context(), inst); err != nil {
 		t.Errorf("stopping a stopped emulator: %v", err)
@@ -230,7 +237,7 @@ func TestMatchPin(t *testing.T) {
 func TestRemoveDefinition(t *testing.T) {
 	sdk := fakeSDK(t)
 	req := newRequest(t, sdk)
-	if _, err := req.Prepare(t.Context()); err != nil {
+	if err := req.Prepare(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	home := os.Getenv("ANDROID_AVD_HOME")
