@@ -101,6 +101,16 @@ func (Kind) RemoveDefinition(name string) error {
 	return os.RemoveAll(filepath.Join(home, name+".avd"))
 }
 
+// bootedMarker returns the file that records that an instance of the AVD has
+// booted.
+func bootedMarker(name string) (string, error) {
+	home, err := avdHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, name+".avd", "devices-cli-booted"), nil
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil

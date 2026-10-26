@@ -26,6 +26,11 @@ type fakeKind struct {
 	started  int
 	bootErr  error
 	pinError map[string]error
+	// booted is whether the definition has booted; overlap counts instances
+	// that started while its first boot ran.
+	booted  bool
+	booting int
+	overlap int
 }
 
 func newFakeKind() *fakeKind {
@@ -56,16 +61,24 @@ type fakeRequest struct {
 	key  string
 }
 
-func (r fakeRequest) Kind() string                  { return "fake" }
-func (r fakeRequest) Key() string                   { return r.key }
-func (r fakeRequest) Description() string           { return "fake " + r.key }
-func (r fakeRequest) Definition() string            { return "def-" + r.key }
-func (r fakeRequest) Prepare(context.Context) error { return nil }
+func (r fakeRequest) Kind() string        { return "fake" }
+func (r fakeRequest) Key() string         { return r.key }
+func (r fakeRequest) Description() string { return "fake " + r.key }
+func (r fakeRequest) Definition() string  { return "def-" + r.key }
+func (r fakeRequest) Prepare(context.Context) (bool, error) {
+	r.kind.mu.Lock()
+	defer r.kind.mu.Unlock()
+	return !r.kind.booted, nil
+}
 
 func (r fakeRequest) Start(_ context.Context, owner string, _ []state.Instance) (state.Instance, error) {
 	r.kind.mu.Lock()
 	defer r.kind.mu.Unlock()
 	r.kind.started++
+	if !r.kind.booted && r.kind.booting > 0 {
+		r.kind.overlap++
+	}
+	r.kind.booting++
 	id := fmt.Sprintf("fake-%d", r.kind.started)
 	r.kind.alive[id] = true
 	now := time.Now()
@@ -75,7 +88,16 @@ func (r fakeRequest) Start(_ context.Context, owner string, _ []state.Instance) 
 	}, nil
 }
 
-func (r fakeRequest) WaitReady(context.Context, state.Instance) error { return r.kind.bootErr }
+func (r fakeRequest) WaitReady(context.Context, state.Instance) error {
+	time.Sleep(20 * time.Millisecond)
+	r.kind.mu.Lock()
+	defer r.kind.mu.Unlock()
+	r.kind.booting--
+	if r.kind.bootErr == nil {
+		r.kind.booted = true
+	}
+	return r.kind.bootErr
+}
 
 func (r fakeRequest) MatchPin(_ context.Context, id string) error {
 	return r.kind.pinError[id]
@@ -146,6 +168,26 @@ func TestConcurrentGetsForOneOwnerStartOneInstance(t *testing.T) {
 		if id != ids[0] {
 			t.Errorf("got IDs %v, want all the same", ids)
 		}
+	}
+}
+
+func TestFirstBootOfADefinitionRunsAlone(t *testing.T) {
+	kind := newFakeKind()
+	m := newManager(t, kind)
+	m.Config.MaxInstances = 8
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			m := *m
+			if _, err := m.Get(t.Context(), t.TempDir(), fakeRequest{kind, "x"}, 0); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	if kind.started != 4 || kind.overlap != 0 {
+		t.Errorf("started %d instances, %d during the first boot; want 4 and 0", kind.started, kind.overlap)
 	}
 }
 

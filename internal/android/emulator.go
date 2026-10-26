@@ -102,8 +102,11 @@ func (r *Request) Description() string {
 	return desc
 }
 
-// Prepare installs missing SDK packages and writes the AVD.
-func (r *Request) Prepare(ctx context.Context) error {
+// Prepare installs missing SDK packages and writes the AVD. A new AVD's first
+// instance creates its disk images, and on Linux a second instance that starts
+// meanwhile fails to lock them, so Prepare reports a first boot until an
+// instance has booted.
+func (r *Request) Prepare(ctx context.Context) (bool, error) {
 	var missing [][]string
 	for _, pkg := range [][]string{
 		{"platform-tools"},
@@ -117,10 +120,17 @@ func (r *Request) Prepare(ctx context.Context) error {
 	if len(missing) > 0 {
 		fmt.Fprintf(r.Log, "devices-cli: installing %d Android SDK package(s) into %s\n", len(missing), r.SDK.Root)
 		if err := r.SDK.install(ctx, r.Log, missing); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return writeDefinition(r.Definition(), r.API, r.Variant, r.ABI)
+	if err := writeDefinition(r.Definition(), r.API, r.Variant, r.ABI); err != nil {
+		return false, err
+	}
+	marker, err := bootedMarker(r.Definition())
+	if err != nil {
+		return false, err
+	}
+	return !fileExists(marker), nil
 }
 
 // Start launches a read-only emulator on the first free console port.
@@ -206,7 +216,11 @@ func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 			return fmt.Errorf("emulator %s exited before it booted%s", inst.ID, logTail(inst.Log))
 		}
 		if out, err := r.SDK.adb(ctx, "-s", inst.ID, "shell", "getprop", "sys.boot_completed"); err == nil && out == "1" {
-			return nil
+			marker, err := bootedMarker(inst.Definition)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(marker, nil, 0o644)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("emulator %s did not boot within %s%s", inst.ID, r.BootTimeout, logTail(inst.Log))

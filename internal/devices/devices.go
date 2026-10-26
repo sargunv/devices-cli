@@ -27,8 +27,11 @@ type Request interface {
 	// empty when its kind has none.
 	Definition() string
 	// Prepare creates the definition when it is missing. It may be slow, and
-	// it runs under a lock for the definition but not the state lock.
-	Prepare(ctx context.Context) error
+	// it runs under a lock for the definition but not the state lock. It
+	// reports whether no instance of the definition has booted yet; get then
+	// keeps that lock until the first instance boots, so a second instance
+	// does not start while the first one sets the definition up.
+	Prepare(ctx context.Context) (firstBoot bool, err error)
 	// Start launches an instance and returns without waiting for it to boot.
 	// It runs under the state lock and sees every recorded instance.
 	Start(ctx context.Context, owner string, running []state.Instance) (state.Instance, error)
@@ -81,9 +84,11 @@ func (m *Manager) Get(ctx context.Context, ownerPath string, req Request, wait t
 	if id, ok, err := m.pinned(ctx, ownerPath, req); err != nil || ok {
 		return id, err
 	}
-	if err := m.prepare(ctx, req); err != nil {
+	unlock, err := m.prepare(ctx, req)
+	if err != nil {
 		return "", err
 	}
+	defer unlock()
 
 	deadline := m.Now().Add(wait)
 	waiting := false
@@ -153,24 +158,32 @@ func (m *Manager) fullError(wait time.Duration) error {
 
 // prepare records the definition as used, so a concurrent gc keeps it, and
 // then creates it if it is missing.
-func (m *Manager) prepare(ctx context.Context, req Request) error {
+// then creates it if it is missing. It returns the function that releases the
+// definition's lock, which it still holds when the definition has never
+// booted.
+func (m *Manager) prepare(ctx context.Context, req Request) (func(), error) {
 	def := req.Definition()
 	if def == "" {
-		return req.Prepare(ctx)
+		_, err := req.Prepare(ctx)
+		return func() {}, err
 	}
 	err := m.Store.Update(func(st *state.State) error {
 		st.TouchDefinition(req.Kind(), def, m.Now())
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	unlock, err := m.Store.Lock(def)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer unlock()
-	return req.Prepare(ctx)
+	firstBoot, err := req.Prepare(ctx)
+	if err != nil || !firstBoot {
+		unlock()
+		return func() {}, err
+	}
+	return unlock, nil
 }
 
 // discard stops an instance that this get started but that failed to boot,

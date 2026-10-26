@@ -81,8 +81,12 @@ func TestPrepareInstallsMissingPackagesAndWritesTheAVD(t *testing.T) {
 	}
 	req := newRequest(t, sdk)
 
-	if err := req.Prepare(t.Context()); err != nil {
+	firstBoot, err := req.Prepare(t.Context())
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !firstBoot {
+		t.Error("a new AVD does not report a first boot")
 	}
 
 	calls, err := os.ReadFile(filepath.Join(sdk.Root, "cmdline-tools", "latest", "bin", "calls"))
@@ -112,6 +116,9 @@ func TestEmulatorLifecycle(t *testing.T) {
 	req := newRequest(t, sdk)
 	req.Args = []string{"-gpu", "swiftshader"}
 	running := []state.Instance{{Port: firstPort}}
+	if _, err := req.Prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 
 	inst, err := req.Start(t.Context(), "/owner", running)
 	if err != nil {
@@ -125,6 +132,9 @@ func TestEmulatorLifecycle(t *testing.T) {
 	}
 	if err := req.WaitReady(t.Context(), inst); err != nil {
 		t.Fatal(err)
+	}
+	if firstBoot, err := req.Prepare(t.Context()); err != nil || firstBoot {
+		t.Errorf("after a boot, Prepare reports a first boot: %v, %v", firstBoot, err)
 	}
 
 	other := inst
@@ -220,7 +230,7 @@ func TestMatchPin(t *testing.T) {
 func TestRemoveDefinition(t *testing.T) {
 	sdk := fakeSDK(t)
 	req := newRequest(t, sdk)
-	if err := req.Prepare(t.Context()); err != nil {
+	if _, err := req.Prepare(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	home := os.Getenv("ANDROID_AVD_HOME")
