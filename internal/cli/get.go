@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sargunv/devices-cli/internal/android"
+	"github.com/sargunv/devices-cli/internal/apple"
 	"github.com/sargunv/devices-cli/internal/devices"
 	"github.com/sargunv/devices-cli/internal/owner"
 )
@@ -33,6 +34,9 @@ slot is in use, get waits up to --wait for one to free up.`,
 	cmd.PersistentFlags().DurationVar(&flags.wait, "wait", 10*time.Minute, "how long to wait for a free slot; 0 fails at once")
 	cmd.PersistentFlags().DurationVar(&flags.bootTimeout, "boot-timeout", 10*time.Minute, "how long to wait for a new instance to boot")
 	cmd.AddCommand(a.getAndroidCommand(&flags))
+	for _, platform := range apple.Platforms {
+		cmd.AddCommand(a.getAppleCommand(&flags, platform))
+	}
 	return cmd
 }
 
@@ -80,6 +84,35 @@ request with the same flags. devices-cli sets -avd, -port, -read-only,
 	cmd.Flags().StringVar(&req.ABI, "abi", android.HostABI(), "ABI of the system image")
 	cmd.Flags().StringVar(&req.Variant, "variant", "default", "system image variant, such as default, google_apis, or google_apis_playstore")
 	_ = cmd.MarkFlagRequired("api")
+	return cmd
+}
+
+func (a *app) getAppleCommand(flags *getFlags, platform apple.Platform) *cobra.Command {
+	var runtime, deviceType string
+	cmd := &cobra.Command{
+		Use:   platform.Kind + " [flags]",
+		Short: "Print the UDID of the worktree's " + platform.Name + " simulator",
+		Long: fmt.Sprintf(`Print the UDID of a %[1]s simulator for this worktree.
+
+get returns the worktree's simulator for the runtime and device type, or
+creates and boots a new one, named "devices-cli <worktree name>". The
+simulator is deleted when it is released, idle too long, or its worktree is
+gone. Runtimes come with Xcode; install more with
+"xcodebuild -downloadPlatform %[1]s".`, platform.Name),
+		Example: fmt.Sprintf(`  devices-cli get %[1]s
+  devices-cli get %[1]s --runtime 26.4`, platform.Kind),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			req, err := apple.NewRequest(cmd.Context(), platform, runtime, deviceType)
+			if err != nil {
+				return err
+			}
+			req.BootTimeout = flags.bootTimeout
+			return a.get(cmd, flags, req)
+		},
+	}
+	cmd.Flags().StringVar(&runtime, "runtime", "", platform.Name+" runtime version, such as 26 or 26.4 (default: the newest installed)")
+	cmd.Flags().StringVar(&deviceType, "device-type", "", "device type name or identifier (default: the runtime's first "+platform.Family+")")
 	return cmd
 }
 

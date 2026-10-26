@@ -14,19 +14,22 @@ is the user contract; `--help` text must agree with it.
 - `internal/owner/`: resolves the owning worktree.
 - `internal/android/`: SDK discovery and installs, AVD definitions, emulator
   instances, and assigned physical devices.
+- `internal/apple/`: per-owner simulators through simctl.
 - `integration/`: boots real devices through the built binary (build tag
   `integration`).
 
 ## Dev tool commands
 
 `mise run check`, `mise run fix`, `mise run test`, `mise run build` (to `bin/`),
-and `mise run integration` (needs `ANDROID_HOME`; boots real emulators).
+and `mise run integration` (boots real emulators and simulators; the Android
+test needs `ANDROID_HOME`).
 
 ## Project invariants
 
 - `get` prints only the device ID on stdout; everything else goes to stderr.
 - devices-cli only stops, deletes, or edits instances and definitions it created
-  and recorded. Android definitions carry the `devices-cli-` prefix.
+  and recorded. Android definitions carry the `devices-cli-` prefix and
+  simulators the `devices-cli ` name prefix.
 - The state lock covers only quick work. Installs and boot waits happen outside
   it; slow definition setup takes its own per-definition lock.
 - Collection must work without an SDK in the environment, since scheduled `gc`

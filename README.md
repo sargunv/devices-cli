@@ -1,9 +1,9 @@
 # devices-cli
 
-Gives each git worktree its own ephemeral test device. A project asks for a
-device and gets its ID; devices-cli starts the device on demand, keeps it apart
-from every other worktree's, caps how many run at once, and stops it when the
-worktree goes away.
+Gives each git worktree its own ephemeral Android emulator or Apple simulator. A
+project asks for a device and gets its ID; devices-cli starts the device on
+demand, keeps it apart from every other worktree's, caps how many run at once,
+and stops it when the worktree goes away.
 
 It is for machines that run many coding agents or checkouts side by side.
 Sharing one emulator between worktrees breaks suites that install an app, and
@@ -92,6 +92,26 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger --name-match=kvm
 ```
 
+### Apple simulators
+
+```sh
+devices-cli get ios [--runtime <version>] [--device-type <name>]
+```
+
+prints the UDID of the worktree's simulator, creating and booting one if needed.
+`tvos`, `visionos`, and `watchos` work the same way.
+
+- `--runtime` is a runtime version such as `26` or `26.4`; it picks the newest
+  installed runtime that matches, and defaults to the newest installed.
+- `--device-type` is a device type name or identifier, such as `iPhone 17`; it
+  defaults to the runtime's first iPhone, Apple TV, Apple Vision, or Apple
+  Watch.
+
+Each worktree gets its own simulator, named `devices-cli <worktree name>`, which
+is deleted, with its data, when it is released or collected. Runtimes come with
+Xcode; `xcodebuild -downloadPlatform <platform>` installs more. A simulator
+boots in about 30 seconds.
+
 ### Physical Android devices
 
 ```sh
@@ -111,6 +131,8 @@ releases it.
 - `devices-cli ls` lists running instances and assigned devices with their
   owners and idle times; `--json` adds the definitions.
 - `devices-cli gc` collects what is no longer needed (see below).
+
+Simulators count toward the same cap as emulators.
 
 `devices-cli <command> --help` describes every flag.
 
@@ -213,7 +235,10 @@ then run `systemctl --user enable --now devices-cli-gc.timer`.
 `mise run fix` formats, and `mise run test` runs the unit tests, which use fake
 SDK tools and boot nothing.
 
-`mise run integration` boots real emulators through the built CLI and checks
-reuse, isolation between owners, the cap, owner-gone collection, and release. It
-needs `ANDROID_HOME` (and KVM on Linux), uses its own state directory, and takes
-about a minute once the system image is installed. CI runs it on Linux.
+`mise run integration` boots real emulators and simulators through the built CLI
+and checks reuse, isolation between owners, the cap, owner-gone collection, and
+release. The Android test needs `ANDROID_HOME` (and KVM on Linux); the Apple
+test runs on macOS with Xcode. Each uses its own state directory and takes about
+a minute once the system image is installed; append
+`-- -run TestAndroidEmulators` or `-- -run TestAppleSimulators` to run one. CI
+runs the Android test on Linux and the Apple test on macOS.

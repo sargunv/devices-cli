@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/sargunv/devices-cli/internal/android"
+	"github.com/sargunv/devices-cli/internal/apple"
 	"github.com/sargunv/devices-cli/internal/config"
 	"github.com/sargunv/devices-cli/internal/devices"
 	"github.com/sargunv/devices-cli/internal/state"
@@ -37,8 +38,8 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "devices-cli",
 		Short: "Give each worktree its own ephemeral test device",
-		Long: `devices-cli gives each git worktree its own test device, starts it on
-demand, and stops it when the worktree goes away.
+		Long: `devices-cli gives each git worktree its own Android emulator or Apple
+simulator, starts it on demand, and stops it when the worktree goes away.
 
 A project asks for a device and gets its ID on stdout:
 
@@ -80,16 +81,18 @@ func (a *app) manager() (*devices.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	kinds := map[string]devices.Kind{android.KindName: android.Kind{}}
+	for _, platform := range apple.Platforms {
+		kinds[platform.Kind] = apple.Kind{}
+	}
 	return &devices.Manager{
 		Store:      state.Store{Dir: stateDir},
 		Config:     cfg,
 		ConfigPath: configPath,
-		Kinds: map[string]devices.Kind{
-			android.KindName: android.Kind{},
-		},
-		Log:  a.stderr,
-		Poll: 5 * time.Second,
-		Now:  time.Now,
+		Kinds:      kinds,
+		Log:        a.stderr,
+		Poll:       5 * time.Second,
+		Now:        time.Now,
 	}, nil
 }
 

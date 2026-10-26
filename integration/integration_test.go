@@ -1,7 +1,8 @@
 //go:build integration
 
 // Package integration boots real devices through the devices-cli binary. Run
-// it with `mise run integration`; it needs ANDROID_HOME and, on Linux, KVM.
+// it with `mise run integration`. The Android test needs ANDROID_HOME and, on
+// Linux, KVM; the Apple test runs on macOS with Xcode.
 package integration
 
 import (
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,18 +20,13 @@ import (
 )
 
 type env struct {
-	t       *testing.T
-	bin     string
-	vars    []string
-	adbPath string
+	t    *testing.T
+	bin  string
+	vars []string
 }
 
 func setup(t *testing.T, config string) *env {
 	t.Helper()
-	sdk := os.Getenv("ANDROID_HOME")
-	if sdk == "" {
-		t.Fatal("ANDROID_HOME must name an Android SDK")
-	}
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "devices-cli")
 	if out, err := exec.Command("go", "build", "-o", bin, "..").CombinedOutput(); err != nil {
@@ -49,7 +46,6 @@ func setup(t *testing.T, config string) *env {
 			"XDG_STATE_HOME="+filepath.Join(dir, "state"),
 			"XDG_CONFIG_HOME="+configHome,
 		),
-		adbPath: filepath.Join(sdk, "platform-tools", "adb"),
 	}
 	t.Cleanup(func() {
 		st := e.ls()
@@ -87,15 +83,41 @@ func (e *env) run(dir string, args ...string) (string, string, error) {
 }
 
 func (e *env) get(dir string, args ...string) string {
-	id, _, err := e.run(dir, append([]string{"get", "android", "--api", api()}, args...)...)
+	id, _, err := e.run(dir, append([]string{"get"}, args...)...)
 	if err != nil {
 		e.t.Fatalf("get in %s: %v", dir, err)
 	}
 	return id
 }
 
-func (e *env) adb(args ...string) string {
-	cmd := exec.Command(e.adbPath, args...)
+// getConcurrently runs two gets for one owner and one for another at once and
+// checks that the first owner got one device and the second another.
+func (e *env) getConcurrently(a, b string, args ...string) (string, string) {
+	ids := map[string]string{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, call := range []struct{ name, dir string }{{"a1", a}, {"a2", a}, {"b", b}} {
+		// t.Fatal must not run in another goroutine, so failures wait for all.
+		wg.Go(func() {
+			id, _, err := e.run(call.dir, append([]string{"get"}, args...)...)
+			if err != nil {
+				e.t.Errorf("get in %s: %v", call.dir, err)
+			}
+			mu.Lock()
+			ids[call.name] = id
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	if e.t.Failed() || ids["a1"] != ids["a2"] || ids["a1"] == ids["b"] {
+		e.t.Fatalf("got %v; want one device for a and another for b", ids)
+	}
+	return ids["a1"], ids["b"]
+}
+
+// output runs a command and returns its trimmed combined output.
+func output(name string, args ...string) string {
+	cmd := exec.Command(name, args...)
 	cmd.Env = append(os.Environ(), "ADB_MDNS=0")
 	out, _ := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out))
@@ -131,39 +153,29 @@ func api() string {
 }
 
 func TestAndroidEmulators(t *testing.T) {
+	sdk := os.Getenv("ANDROID_HOME")
+	if sdk == "" {
+		t.Fatal("ANDROID_HOME must name an Android SDK")
+	}
+	adb := func(args ...string) string { return output(filepath.Join(sdk, "platform-tools", "adb"), args...) }
 	e := setup(t, "max_instances = 2\n")
 	a, b := e.owner(), e.owner()
+	request := []string{"android", "--api", api()}
 
-	// Two gets for one owner and one for another, all at once.
-	ids := map[string]string{}
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for _, call := range []struct{ name, dir string }{{"a1", a}, {"a2", a}, {"b", b}} {
-		wg.Go(func() {
-			id := e.get(call.dir)
-			mu.Lock()
-			ids[call.name] = id
-			mu.Unlock()
-		})
-	}
-	wg.Wait()
-	if ids["a1"] != ids["a2"] || ids["a1"] == ids["b"] {
-		t.Fatalf("got %v; want one instance for a and another for b", ids)
-	}
-	serialA, serialB := ids["a1"], ids["b"]
+	serialA, serialB := e.getConcurrently(a, b, request...)
 
 	// Each owner's instance has its own data.
-	e.adb("-s", serialA, "shell", "echo owner-a > /data/local/tmp/marker")
-	if got := e.adb("-s", serialA, "shell", "cat /data/local/tmp/marker"); got != "owner-a" {
+	adb("-s", serialA, "shell", "echo owner-a > /data/local/tmp/marker")
+	if got := adb("-s", serialA, "shell", "cat /data/local/tmp/marker"); got != "owner-a" {
 		t.Errorf("a reads %q from its own marker", got)
 	}
-	if got := e.adb("-s", serialB, "shell", "cat /data/local/tmp/marker"); strings.Contains(got, "owner-a") {
+	if got := adb("-s", serialB, "shell", "cat /data/local/tmp/marker"); strings.Contains(got, "owner-a") {
 		t.Error("b sees a's marker")
 	}
 
 	// A running instance comes back at once.
 	start := time.Now()
-	if id := e.get(a); id != serialA {
+	if id := e.get(a, request...); id != serialA {
 		t.Errorf("a got %s, then %s", serialA, id)
 	}
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
@@ -171,7 +183,7 @@ func TestAndroidEmulators(t *testing.T) {
 	}
 
 	// Both slots are taken.
-	if _, stderr, err := e.run(e.owner(), "get", "android", "--api", api(), "--wait", "0"); err == nil || !strings.Contains(stderr, "max_instances") {
+	if _, stderr, err := e.run(e.owner(), append([]string{"get", "--wait", "0"}, request...)...); err == nil || !strings.Contains(stderr, "max_instances") {
 		t.Errorf("a third owner got a device past the cap: %v", err)
 	}
 
@@ -182,7 +194,7 @@ func TestAndroidEmulators(t *testing.T) {
 	if l := e.ls(); len(l.Instances) != 1 || l.Instances[0].ID != serialA {
 		t.Errorf("after removing b: %+v; want only a's instance", l.Instances)
 	}
-	if got := e.adb("-s", serialB, "get-state"); got == "device" {
+	if got := adb("-s", serialB, "get-state"); got == "device" {
 		t.Errorf("b's emulator %s still runs", serialB)
 	}
 
@@ -195,5 +207,48 @@ func TestAndroidEmulators(t *testing.T) {
 	}
 	if err := exec.Command("kill", "-0", strconv.Itoa(pid)).Run(); err == nil {
 		t.Errorf("a's emulator process %d still runs", pid)
+	}
+}
+
+func TestAppleSimulators(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Apple simulators run only on macOS")
+	}
+	// Two owners' simulators run at once, past the default cap of a small CI
+	// runner.
+	e := setup(t, "max_instances = 2\n")
+	a, b := e.owner(), e.owner()
+
+	udidA, udidB := e.getConcurrently(a, b, "ios")
+
+	// Each owner's simulator has its own data.
+	output("xcrun", "simctl", "spawn", udidA, "defaults", "write", "dev.devices-cli.test", "marker", "owner-a")
+	if got := output("xcrun", "simctl", "spawn", udidA, "defaults", "read", "dev.devices-cli.test", "marker"); got != "owner-a" {
+		t.Errorf("a reads %q from its own marker", got)
+	}
+	if got := output("xcrun", "simctl", "spawn", udidB, "defaults", "read", "dev.devices-cli.test", "marker"); strings.Contains(got, "owner-a") {
+		t.Error("b sees a's marker")
+	}
+
+	if id := e.get(a, "ios"); id != udidA {
+		t.Errorf("a got %s, then %s", udidA, id)
+	}
+
+	// A simulator whose owner is gone is deleted at the next command, and a
+	// released one is deleted too.
+	if err := os.RemoveAll(b); err != nil {
+		t.Fatal(err)
+	}
+	if l := e.ls(); len(l.Instances) != 1 || l.Instances[0].ID != udidA {
+		t.Errorf("after removing b: %+v; want only a's simulator", l.Instances)
+	}
+	if _, _, err := e.run(a, "release"); err != nil {
+		t.Fatal(err)
+	}
+	devices := output("xcrun", "simctl", "list", "devices")
+	for _, udid := range []string{udidA, udidB} {
+		if strings.Contains(devices, udid) {
+			t.Errorf("simulator %s still exists", udid)
+		}
 	}
 }
