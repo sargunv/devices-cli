@@ -11,7 +11,7 @@
     "sortPackageJson": false,
   },
   "gofumpt": {
-    "langVersion": "go1.25",
+    "langVersion": "go1.26",
     "modulePath": "github.com/sargunv/devices-cli",
   },
   "excludes": ["mise.lock"],
