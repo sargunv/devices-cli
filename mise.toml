@@ -1,0 +1,35 @@
+[settings]
+experimental = true
+pin = true
+lockfile = true
+
+[tools]
+"aqua:dprint/dprint" = "0.64.3"
+"aqua:golangci/golangci-lint" = "2.15.0"
+"aqua:jdx/jactionlint" = "2.3.0"
+"aqua:koalaman/shellcheck" = "0.11.0"
+"core:go" = "1.27.3"
+"github:jdx/hk" = "2.8.1"
+
+[deps.go]
+auto = true
+
+[tasks.check]
+run = "hk check --all"
+
+[tasks.fix]
+run = "hk fix --all"
+
+[tasks.test]
+run = "go test ./..."
+
+[tasks.build]
+run = "go build -o bin/devices-cli ."
+
+[hooks]
+postinstall = ["hk install --mise"]
+
+[tasks.integration]
+description = "Boot real Android emulators through the built CLI (needs ANDROID_HOME)"
+dir = "integration"
+run = "go test -tags integration -count=1 -timeout 30m -v ./..."
