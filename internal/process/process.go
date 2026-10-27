@@ -16,18 +16,32 @@ import (
 )
 
 // Running reports whether pid runs a command line that contains every one of
-// the substrings, so a reused process ID does not count.
+// the substrings, so a reused process ID does not count. A process that is
+// replacing its program, as the Android emulator does, briefly shows no
+// command line, so a mismatch is checked once more.
 func Running(pid int, substrings ...string) bool {
 	if pid <= 0 {
 		return false
 	}
-	out, err := exec.Command("ps", "-ww", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return false
+	for attempt := 0; ; attempt++ {
+		out, err := exec.Command("ps", "-ww", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+		if err != nil {
+			// ps fails when no process has the ID.
+			return false
+		}
+		if containsAll(" "+strings.TrimSpace(string(out))+" ", substrings) {
+			return true
+		}
+		if attempt == 1 {
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	cmdline := " " + strings.TrimSpace(string(out)) + " "
-	for _, s := range substrings {
-		if !strings.Contains(cmdline, s) {
+}
+
+func containsAll(s string, substrings []string) bool {
+	for _, sub := range substrings {
+		if !strings.Contains(s, sub) {
 			return false
 		}
 	}

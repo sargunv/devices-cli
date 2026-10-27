@@ -313,7 +313,8 @@ func TestFreeBSDVMs(t *testing.T) {
 	a, b := e.owner(), e.owner()
 	request := []string{"freebsd", "--release", "14.4"}
 	ssh := func(host string, args ...string) string {
-		return output("ssh", append([]string{"-o", "BatchMode=yes", host}, args...)...)
+		// anyvm's SSH configuration adds each VM's host key with a warning.
+		return output("ssh", append([]string{"-o", "BatchMode=yes", "-o", "LogLevel=ERROR", host}, args...)...)
 	}
 
 	hostA, hostB := e.getConcurrently(a, b, request...)
