@@ -1,6 +1,7 @@
 # devices-cli
 
-Gives each git worktree its own ephemeral Android emulator or Apple simulator. A
+Gives each git worktree its own ephemeral test device: an Android emulator, an
+Apple simulator, an OpenHarmony emulator, or a FreeBSD virtual machine. A
 project asks for a device and gets its ID; devices-cli starts the device on
 demand, keeps it apart from every other worktree's, caps how many run at once,
 and stops it when the worktree goes away.
@@ -137,6 +138,31 @@ port to a host port from 56000 up. QEMU uses KVM on an x86_64 Linux host that
 has it and emulates the machine elsewhere; on an Apple silicon laptop an
 instance answers hdc in about 30 seconds.
 
+### FreeBSD virtual machines
+
+```sh
+devices-cli get freebsd --release 14.4
+```
+
+prints an SSH host, such as `devices-cli-freebsd-60000`, for the worktree's
+FreeBSD virtual machine once it answers SSH:
+
+```sh
+ssh "$(devices-cli get freebsd --release 14.4)" uname -a
+```
+
+[anyvm](https://github.com/anyvm-org/anyvm) boots the VM and adds the host to
+`~/.ssh/config.d`, which `~/.ssh/config` includes. The worktree is mounted in
+the VM over NFS at its own path, so a command can use the same paths there. The
+VM boots anyvm's cached image (shared in `$XDG_CACHE_HOME/anyvm`) with
+`--snapshot`, so VMs share the image and a VM's changes, such as installed
+packages, go away with it. Releasing or collecting a VM runs `shutdown -p now`
+in it and signals QEMU only if the guest does not power off.
+
+anyvm comes from `ANYVM`, the path of `anyvm.py`, or from `anyvm` on `PATH`. It
+needs `python3`, QEMU, and UEFI firmware (the `ovmf` package on Debian and
+Ubuntu). FreeBSD VMs run only on a Linux host with KVM.
+
 ### Physical Android devices
 
 ```sh
@@ -157,7 +183,7 @@ releases it.
   owners and idle times; `--json` adds the definitions.
 - `devices-cli gc` collects what is no longer needed (see below).
 
-Simulators count toward the same cap as emulators.
+Every kind of device counts toward the same cap.
 
 `devices-cli <command> --help` describes every flag.
 
@@ -269,6 +295,8 @@ installed; append `-- -run <test>` to run one:
 - `TestAppleSimulators` runs on macOS with Xcode.
 - `TestOHOSEmulators` needs `OHOS_EMULATOR_IMAGES` and `qemu-system-x86_64` and
   `hdc` on `PATH`. Put the real `hdc` ahead of mise's shims.
+- `TestFreeBSDVMs` runs on Linux with KVM and needs `ANYVM`, QEMU, and UEFI
+  firmware.
 
-CI runs the Android and OpenHarmony tests on Linux with KVM and the Apple test
-on macOS.
+CI runs the Android, OpenHarmony, and FreeBSD tests on Linux with KVM and the
+Apple test on macOS.

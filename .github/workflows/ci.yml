@@ -54,6 +54,24 @@ jobs:
           unzip -q "$RUNNER_TEMP/linux/toolchains-linux-x64-6.1.0.31-Release.zip" -d "$RUNNER_TEMP/ohos"
           echo "$RUNNER_TEMP/ohos/toolchains" >> "$GITHUB_PATH"
       - run: mise run integration -- -run TestOHOSEmulators
+  freebsd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install QEMU, UEFI firmware, and anyvm
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ovmf qemu-system-x86 qemu-utils
+          curl -fsSL -o "$RUNNER_TEMP/anyvm.py" https://github.com/anyvm-org/anyvm/releases/download/v0.7.5/anyvm.py
+          echo "c192b299b9bf1b9f07b1d5e5b3977b518f8f24a9af9c20da259cdca22271d9f5  $RUNNER_TEMP/anyvm.py" | sha256sum --check
+          echo "ANYVM=$RUNNER_TEMP/anyvm.py" >> "$GITHUB_ENV"
+      - run: mise run integration -- -run TestFreeBSDVMs
   apple:
     runs-on: macos-latest
     steps:

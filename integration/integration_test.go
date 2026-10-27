@@ -3,7 +3,8 @@
 // Package integration boots real devices through the devices-cli binary. Run
 // it with `mise run integration`. The Android test needs ANDROID_HOME and, on
 // Linux, KVM; the Apple test runs on macOS with Xcode; the OpenHarmony test
-// needs OHOS_EMULATOR_IMAGES and QEMU and hdc on PATH.
+// needs OHOS_EMULATOR_IMAGES and QEMU and hdc on PATH; the FreeBSD test runs
+// on Linux with KVM and needs ANYVM, QEMU, and UEFI firmware.
 package integration
 
 import (
@@ -301,5 +302,58 @@ func TestOHOSEmulators(t *testing.T) {
 	}
 	if !after.ModTime().Equal(before.ModTime()) {
 		t.Error("an instance wrote the shared userdata image")
+	}
+}
+
+func TestFreeBSDVMs(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("FreeBSD VMs run only on Linux")
+	}
+	e := setup(t, "max_instances = 2\n")
+	a, b := e.owner(), e.owner()
+	request := []string{"freebsd", "--release", "14.4"}
+	ssh := func(host string, args ...string) string {
+		return output("ssh", append([]string{"-o", "BatchMode=yes", host}, args...)...)
+	}
+
+	hostA, hostB := e.getConcurrently(a, b, request...)
+
+	if got := ssh(hostA, "uname", "-s"); got != "FreeBSD" {
+		t.Errorf("ssh %s uname -s = %q", hostA, got)
+	}
+	// The owner directory is mounted at its own path, and only in its VM.
+	if err := os.WriteFile(filepath.Join(a, "marker"), []byte("owner-a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ssh(hostA, "cat", filepath.Join(a, "marker")); got != "owner-a" {
+		t.Errorf("a's VM reads %q from the owner directory", got)
+	}
+	if got := ssh(hostB, "cat", filepath.Join(a, "marker")); strings.Contains(got, "owner-a") {
+		t.Error("b's VM sees a's owner directory")
+	}
+
+	if id := e.get(a, request...); id != hostA {
+		t.Errorf("a got %s, then %s", hostA, id)
+	}
+
+	// Removing b's owner shuts its VM down at the next command; release shuts
+	// a's down.
+	if err := os.RemoveAll(b); err != nil {
+		t.Fatal(err)
+	}
+	if l := e.ls(); len(l.Instances) != 1 || l.Instances[0].ID != hostA {
+		t.Errorf("after removing b: %+v; want only a's VM", l.Instances)
+	}
+	pid := e.ls().Instances[0].PID
+	if _, _, err := e.run(a, "release"); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("pgrep", "-g", strconv.Itoa(pid)).Run(); err == nil {
+		t.Errorf("a's VM processes in group %d still run", pid)
+	}
+	for _, host := range []string{hostA, hostB} {
+		if got := output("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "true"); !strings.Contains(got, "ssh:") {
+			t.Errorf("%s still answers SSH: %q", host, got)
+		}
 	}
 }

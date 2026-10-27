@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/sargunv/devices-cli/internal/apple"
 	"github.com/sargunv/devices-cli/internal/config"
 	"github.com/sargunv/devices-cli/internal/devices"
+	"github.com/sargunv/devices-cli/internal/freebsd"
 	"github.com/sargunv/devices-cli/internal/ohos"
 	"github.com/sargunv/devices-cli/internal/state"
 )
@@ -39,8 +41,9 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "devices-cli",
 		Short: "Give each worktree its own ephemeral test device",
-		Long: `devices-cli gives each git worktree its own Android emulator or Apple
-simulator, starts it on demand, and stops it when the worktree goes away.
+		Long: `devices-cli gives each git worktree its own test device (an Android
+emulator, an Apple simulator, an OpenHarmony emulator, or a FreeBSD virtual
+machine), starts it on demand, and stops it when the worktree goes away.
 
 A project asks for a device and gets its ID on stdout:
 
@@ -87,6 +90,7 @@ func (a *app) manager() (*devices.Manager, error) {
 		kinds[platform.Kind] = apple.Kind{}
 	}
 	kinds[ohos.KindName] = ohos.Kind{}
+	kinds[freebsd.KindName] = freebsd.Kind{VMDir: filepath.Join(stateDir, "vms")}
 	return &devices.Manager{
 		Store:      state.Store{Dir: stateDir},
 		Config:     cfg,

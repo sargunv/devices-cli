@@ -64,6 +64,11 @@ func StateDir() (string, error) {
 	return filepath.Join(dir, "devices-cli"), nil
 }
 
+// CacheDir returns the user's cache directory, which tools such as anyvm share.
+func CacheDir() (string, error) {
+	return xdgDir("XDG_CACHE_HOME", ".cache")
+}
+
 func xdgDir(env, fallback string) (string, error) {
 	if dir := os.Getenv(env); filepath.IsAbs(dir) {
 		return dir, nil

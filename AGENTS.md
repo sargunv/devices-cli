@@ -17,6 +17,7 @@ is the user contract; `--help` text must agree with it.
 - `internal/apple/`: per-owner simulators through simctl.
 - `internal/ohos/`: per-owner QEMU instances of the Oniro image, reached through
   hdc.
+- `internal/freebsd/`: per-owner FreeBSD VMs through anyvm.
 - `internal/process/`: helpers for the device processes kinds launch.
 - `integration/`: boots real devices through the built binary (build tag
   `integration`).

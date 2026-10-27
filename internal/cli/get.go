@@ -3,13 +3,16 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/sargunv/devices-cli/internal/android"
 	"github.com/sargunv/devices-cli/internal/apple"
+	"github.com/sargunv/devices-cli/internal/config"
 	"github.com/sargunv/devices-cli/internal/devices"
+	"github.com/sargunv/devices-cli/internal/freebsd"
 	"github.com/sargunv/devices-cli/internal/ohos"
 	"github.com/sargunv/devices-cli/internal/owner"
 )
@@ -39,6 +42,52 @@ slot is in use, get waits up to --wait for one to free up.`,
 		cmd.AddCommand(a.getAppleCommand(&flags, platform))
 	}
 	cmd.AddCommand(a.getOHOSCommand(&flags))
+	cmd.AddCommand(a.getFreeBSDCommand(&flags))
+	return cmd
+}
+
+func (a *app) getFreeBSDCommand(flags *getFlags) *cobra.Command {
+	var release string
+	cmd := &cobra.Command{
+		Use:   "freebsd --release <version>",
+		Short: "Print the SSH host of a FreeBSD virtual machine",
+		Long: `Print the SSH host of a FreeBSD virtual machine for this worktree.
+
+get returns the worktree's VM, or boots one with anyvm and waits until it
+answers SSH. The worktree is mounted in the VM over NFS at its own path, so
+files keep their paths, and "ssh <host> <command>" runs a command there. The
+VM boots anyvm's cached image with --snapshot, so VMs share the image and a
+VM's changes go away with it. Release and collection shut the VM down with
+"shutdown -p now".
+
+anyvm comes from ANYVM, the path of anyvm.py, or from PATH. It needs QEMU and
+UEFI firmware, and devices-cli runs FreeBSD VMs only on a Linux host with KVM.`,
+		Example: `  ssh "$(devices-cli get freebsd --release 14.4)" uname -a`,
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			req, err := freebsd.NewRequest(release)
+			if err != nil {
+				return err
+			}
+			stateDir, err := config.StateDir()
+			if err != nil {
+				return err
+			}
+			cacheDir, err := config.CacheDir()
+			if err != nil {
+				return err
+			}
+			req.VMDir = filepath.Join(stateDir, "vms")
+			req.CacheDir = filepath.Join(cacheDir, "anyvm")
+			if req.LogDir, err = logDir(); err != nil {
+				return err
+			}
+			req.BootTimeout = flags.bootTimeout
+			return a.get(cmd, flags, req)
+		},
+	}
+	cmd.Flags().StringVar(&release, "release", "", "FreeBSD release, such as 14.4 (required)")
+	_ = cmd.MarkFlagRequired("release")
 	return cmd
 }
 
