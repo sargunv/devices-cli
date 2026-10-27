@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sargunv/devices-cli/internal/process"
 	"github.com/sargunv/devices-cli/internal/state"
 )
 
@@ -141,7 +141,7 @@ func (r *Request) Prepare(ctx context.Context) error {
 func (r *Request) prime(ctx context.Context) error {
 	port := 0
 	for p := lastPort + 2; p <= lastPort+100; p += 2 {
-		if bindable(p) && bindable(p+1) {
+		if process.Bindable(p) && process.Bindable(p+1) {
 			port = p
 			break
 		}
@@ -226,20 +226,11 @@ func (r *Request) launch(port int, logPath string, extra []string) (state.Instan
 func freePort(running []state.Instance) (int, error) {
 	for port := firstPort; port <= lastPort; port += 2 {
 		taken := slices.ContainsFunc(running, func(in state.Instance) bool { return in.Port == port })
-		if !taken && bindable(port) && bindable(port+1) {
+		if !taken && process.Bindable(port) && process.Bindable(port+1) {
 			return port, nil
 		}
 	}
 	return 0, fmt.Errorf("no free emulator console port between %d and %d", firstPort, lastPort)
-}
-
-func bindable(port int) bool {
-	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		return false
-	}
-	l.Close()
-	return true
 }
 
 // WaitReady waits until the emulator reports sys.boot_completed.
@@ -247,13 +238,13 @@ func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 	deadline := time.Now().Add(r.BootTimeout)
 	for {
 		if !alive(inst) {
-			return fmt.Errorf("emulator %s exited before it booted%s", inst.ID, logTail(inst.Log))
+			return fmt.Errorf("emulator %s exited before it booted%s", inst.ID, process.LogTail(inst.Log))
 		}
 		if out, err := r.SDK.adb(ctx, "-s", inst.ID, "shell", "getprop", "sys.boot_completed"); err == nil && out == "1" {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("emulator %s did not boot within %s%s", inst.ID, r.BootTimeout, logTail(inst.Log))
+			return fmt.Errorf("emulator %s did not boot within %s%s", inst.ID, r.BootTimeout, process.LogTail(inst.Log))
 		}
 		select {
 		case <-ctx.Done():
@@ -261,16 +252,6 @@ func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 		case <-time.After(time.Second):
 		}
 	}
-}
-
-func logTail(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	lines = lines[max(0, len(lines)-20):]
-	return fmt.Sprintf("; the end of %s:\n%s", path, strings.Join(lines, "\n"))
 }
 
 // MatchPin checks that a pinned physical device is connected and runs the
@@ -322,47 +303,15 @@ type Kind struct{}
 func (Kind) Alive(_ context.Context, inst state.Instance) bool { return alive(inst) }
 
 func alive(inst state.Instance) bool {
-	if inst.PID <= 0 {
-		return false
-	}
-	out, err := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(inst.PID)).Output()
-	if err != nil {
-		return false
-	}
-	cmdline := " " + strings.TrimSpace(string(out)) + " "
-	return strings.Contains(cmdline, " -avd "+inst.Definition+" ") &&
-		strings.Contains(cmdline, " -port "+strconv.Itoa(inst.Port)+" ")
+	return process.Running(inst.PID, " -avd "+inst.Definition+" ", " -port "+strconv.Itoa(inst.Port)+" ")
 }
 
 // Stop implements devices.Kind. It signals the emulator's process group, which
-// also holds the helpers it starts.
+// also holds the helpers it starts. The log stays for diagnosis until the next
+// emulator on its port.
 func (Kind) Stop(_ context.Context, inst state.Instance) error {
-	if alive(inst) {
-		for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
-			if err := syscall.Kill(-inst.PID, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
-				return err
-			}
-			if waitGone(inst.PID, 15*time.Second) {
-				break
-			}
-		}
-		if !waitGone(inst.PID, 0) {
-			return fmt.Errorf("process group %d survived SIGKILL", inst.PID)
-		}
+	if !alive(inst) {
+		return nil
 	}
-	// The log stays for diagnosis until the next emulator on its port.
-	return nil
-}
-
-func waitGone(pgid int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for {
-		if err := syscall.Kill(-pgid, 0); errors.Is(err, syscall.ESRCH) {
-			return true
-		}
-		if time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	return process.StopGroup(inst.PID, 15*time.Second)
 }

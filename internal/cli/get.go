@@ -10,6 +10,7 @@ import (
 	"github.com/sargunv/devices-cli/internal/android"
 	"github.com/sargunv/devices-cli/internal/apple"
 	"github.com/sargunv/devices-cli/internal/devices"
+	"github.com/sargunv/devices-cli/internal/ohos"
 	"github.com/sargunv/devices-cli/internal/owner"
 )
 
@@ -37,7 +38,35 @@ slot is in use, get waits up to --wait for one to free up.`,
 	for _, platform := range apple.Platforms {
 		cmd.AddCommand(a.getAppleCommand(&flags, platform))
 	}
+	cmd.AddCommand(a.getOHOSCommand(&flags))
 	return cmd
+}
+
+func (a *app) getOHOSCommand(flags *getFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "ohos",
+		Short: "Print the hdc connect key of an OpenHarmony emulator",
+		Long: `Print the hdc connect key of an OpenHarmony emulator for this worktree.
+
+get returns the worktree's emulator, or starts QEMU on the Oniro emulator image
+in $OHOS_EMULATOR_IMAGES and waits until hdc can run a shell command in it.
+The emulator runs with -snapshot, so instances share the image and never
+change it. qemu-system-x86_64 and hdc must be on PATH. QEMU uses KVM on an
+x86_64 Linux host that has it and emulates the machine elsewhere.`,
+		Example: `  hdc -t "$(devices-cli get ohos)" shell uname -a`,
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			req, err := ohos.NewRequest()
+			if err != nil {
+				return err
+			}
+			req.BootTimeout = flags.bootTimeout
+			if req.LogDir, err = logDir(); err != nil {
+				return err
+			}
+			return a.get(cmd, flags, req)
+		},
+	}
 }
 
 func (a *app) getAndroidCommand(flags *getFlags) *cobra.Command {

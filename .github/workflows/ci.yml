@@ -29,6 +29,31 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - run: mise run integration -- -run TestAndroidEmulators
+  ohos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # QEMU, the Oniro 6.1 image, and hdc from the OpenHarmony 6.1 SDK, whose
+      # archive is read only as far as the toolchains.
+      - name: Install QEMU, the emulator image, and hdc
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86
+          curl -fsSL -o "$RUNNER_TEMP/oniro.zip" https://github.com/eclipse-oniro4openharmony/device_board_oniro/releases/download/v6.1/oniro_emulator.zip
+          echo "a30e01f1b161e0fdcd91263f30f29cc92bfa49c1776d5ee2c46caefef055b2da  $RUNNER_TEMP/oniro.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/oniro.zip" -d "$RUNNER_TEMP/oniro"
+          echo "OHOS_EMULATOR_IMAGES=$RUNNER_TEMP/oniro/images" >> "$GITHUB_ENV"
+          curl -fsSL https://repo.huaweicloud.com/openharmony/os/6.1-Release/ohos-sdk-windows_linux-public.tar.gz |
+            tar -xzf - -C "$RUNNER_TEMP" --occurrence=1 linux/toolchains-linux-x64-6.1.0.31-Release.zip
+          unzip -q "$RUNNER_TEMP/linux/toolchains-linux-x64-6.1.0.31-Release.zip" -d "$RUNNER_TEMP/ohos"
+          echo "$RUNNER_TEMP/ohos/toolchains" >> "$GITHUB_PATH"
+      - run: mise run integration -- -run TestOHOSEmulators
   apple:
     runs-on: macos-latest
     steps:

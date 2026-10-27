@@ -114,6 +114,29 @@ is deleted, with its data, when it is released or collected. Runtimes come with
 Xcode; `xcodebuild -downloadPlatform <platform>` installs more. A simulator
 boots in about 30 seconds.
 
+### OpenHarmony emulators
+
+```sh
+devices-cli get ohos
+```
+
+prints the hdc connect key, such as `127.0.0.1:56000`, of the worktree's
+OpenHarmony emulator once `hdc -t <key> shell` works in it:
+
+```sh
+hdc -t "$(devices-cli get ohos)" shell uname -a
+```
+
+The emulator is QEMU running the
+[Oniro emulator image](https://github.com/eclipse-oniro4openharmony/device_board_oniro/releases)
+from the directory that `OHOS_EMULATOR_IMAGES` names, which holds its `bzImage`
+and `.img` files. `qemu-system-x86_64` and `hdc` (from the OpenHarmony SDK's
+`toolchains` directory) must be on `PATH`. Each instance runs with `-snapshot`,
+so instances share the image and never change it, and forwards the guest's hdc
+port to a host port from 56000 up. QEMU uses KVM on an x86_64 Linux host that
+has it and emulates the machine elsewhere; on an Apple silicon laptop an
+instance answers hdc in about 30 seconds.
+
 ### Physical Android devices
 
 ```sh
@@ -237,10 +260,15 @@ then run `systemctl --user enable --now devices-cli-gc.timer`.
 `mise run fix` formats, and `mise run test` runs the unit tests, which use fake
 SDK tools and boot nothing.
 
-`mise run integration` boots real emulators and simulators through the built CLI
-and checks reuse, isolation between owners, the cap, owner-gone collection, and
-release. The Android test needs `ANDROID_HOME` (and KVM on Linux); the Apple
-test runs on macOS with Xcode. Each uses its own state directory and takes about
-a minute once the system image is installed; append
-`-- -run TestAndroidEmulators` or `-- -run TestAppleSimulators` to run one. CI
-runs the Android test on Linux and the Apple test on macOS.
+`mise run integration` boots real devices through the built CLI and checks
+reuse, isolation between owners, owner-gone collection, and release. Each test
+uses its own state directory and takes about a minute once its image is
+installed; append `-- -run <test>` to run one:
+
+- `TestAndroidEmulators` needs `ANDROID_HOME`, and KVM on Linux.
+- `TestAppleSimulators` runs on macOS with Xcode.
+- `TestOHOSEmulators` needs `OHOS_EMULATOR_IMAGES` and `qemu-system-x86_64` and
+  `hdc` on `PATH`. Put the real `hdc` ahead of mise's shims.
+
+CI runs the Android and OpenHarmony tests on Linux with KVM and the Apple test
+on macOS.

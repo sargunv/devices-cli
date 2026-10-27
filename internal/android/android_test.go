@@ -2,7 +2,6 @@ package android
 
 import (
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -177,18 +176,6 @@ func TestWaitReadyReportsAnEmulatorThatExits(t *testing.T) {
 	err = req.WaitReady(t.Context(), inst)
 	if err == nil || !strings.Contains(err.Error(), "PANIC: no image") {
 		t.Errorf("got %v, want an error with the log's end", err)
-	}
-}
-
-func TestFreePortSkipsBoundPorts(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	bound := l.Addr().(*net.TCPAddr).Port
-	if bindable(bound) {
-		t.Errorf("port %d is bound but bindable", bound)
 	}
 }
 

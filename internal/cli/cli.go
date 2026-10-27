@@ -15,6 +15,7 @@ import (
 	"github.com/sargunv/devices-cli/internal/apple"
 	"github.com/sargunv/devices-cli/internal/config"
 	"github.com/sargunv/devices-cli/internal/devices"
+	"github.com/sargunv/devices-cli/internal/ohos"
 	"github.com/sargunv/devices-cli/internal/state"
 )
 
@@ -85,6 +86,7 @@ func (a *app) manager() (*devices.Manager, error) {
 	for _, platform := range apple.Platforms {
 		kinds[platform.Kind] = apple.Kind{}
 	}
+	kinds[ohos.KindName] = ohos.Kind{}
 	return &devices.Manager{
 		Store:      state.Store{Dir: stateDir},
 		Config:     cfg,

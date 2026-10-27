@@ -2,7 +2,8 @@
 
 // Package integration boots real devices through the devices-cli binary. Run
 // it with `mise run integration`. The Android test needs ANDROID_HOME and, on
-// Linux, KVM; the Apple test runs on macOS with Xcode.
+// Linux, KVM; the Apple test runs on macOS with Xcode; the OpenHarmony test
+// needs OHOS_EMULATOR_IMAGES and QEMU and hdc on PATH.
 package integration
 
 import (
@@ -250,5 +251,55 @@ func TestAppleSimulators(t *testing.T) {
 		if strings.Contains(devices, udid) {
 			t.Errorf("simulator %s still exists", udid)
 		}
+	}
+}
+
+func TestOHOSEmulators(t *testing.T) {
+	images := os.Getenv("OHOS_EMULATOR_IMAGES")
+	if images == "" {
+		t.Fatal("OHOS_EMULATOR_IMAGES must name the Oniro emulator image directory")
+	}
+	before, err := os.Stat(filepath.Join(images, "userdata.img"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdc := func(key string, args ...string) string { return output("hdc", append([]string{"-t", key}, args...)...) }
+	e := setup(t, "max_instances = 2\n")
+	a, b := e.owner(), e.owner()
+
+	keyA, keyB := e.getConcurrently(a, b, "ohos")
+
+	// Each owner's instance has its own data, and none writes the image.
+	hdc(keyA, "shell", "echo owner-a > /data/local/tmp/marker")
+	if got := hdc(keyA, "shell", "cat /data/local/tmp/marker"); got != "owner-a" {
+		t.Errorf("a reads %q from its own marker", got)
+	}
+	if got := hdc(keyB, "shell", "cat /data/local/tmp/marker"); strings.Contains(got, "owner-a") {
+		t.Error("b sees a's marker")
+	}
+
+	if id := e.get(a, "ohos"); id != keyA {
+		t.Errorf("a got %s, then %s", keyA, id)
+	}
+
+	if err := os.RemoveAll(b); err != nil {
+		t.Fatal(err)
+	}
+	if l := e.ls(); len(l.Instances) != 1 || l.Instances[0].ID != keyA {
+		t.Errorf("after removing b: %+v; want only a's instance", l.Instances)
+	}
+	pid := e.ls().Instances[0].PID
+	if _, _, err := e.run(a, "release"); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("kill", "-0", strconv.Itoa(pid)).Run(); err == nil {
+		t.Errorf("a's QEMU process %d still runs", pid)
+	}
+	after, err := os.Stat(filepath.Join(images, "userdata.img"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Error("an instance wrote the shared userdata image")
 	}
 }
