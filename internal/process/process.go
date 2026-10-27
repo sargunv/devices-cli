@@ -39,6 +39,24 @@ func Running(pid int, substrings ...string) bool {
 	}
 }
 
+// GroupRunning reports whether the process group pgid has a process whose
+// command line matches the extended regular expression pattern. As in Running,
+// a miss is checked once more unless the group is gone.
+func GroupRunning(pgid int, pattern string) bool {
+	if pgid <= 0 {
+		return false
+	}
+	for attempt := 0; ; attempt++ {
+		if exec.Command("pgrep", "-g", strconv.Itoa(pgid), "-f", pattern).Run() == nil {
+			return true
+		}
+		if attempt == 1 || WaitGone(pgid, 0) {
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
 func containsAll(s string, substrings []string) bool {
 	for _, sub := range substrings {
 		if !strings.Contains(s, sub) {

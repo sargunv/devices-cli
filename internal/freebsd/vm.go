@@ -281,11 +281,8 @@ func (k Kind) Alive(_ context.Context, inst state.Instance) bool { return alive(
 // alive reports whether the instance's process group still holds anyvm or
 // QEMU for its data directory, so a reused process ID does not count.
 func alive(inst state.Instance) bool {
-	if inst.PID <= 0 {
-		return false
-	}
 	pattern := regexp.QuoteMeta("freebsd-"+strconv.Itoa(inst.Port)) + "([ /]|$)"
-	return exec.Command("pgrep", "-g", strconv.Itoa(inst.PID), "-f", pattern).Run() == nil
+	return process.GroupRunning(inst.PID, pattern)
 }
 
 // Stop implements devices.Kind. It shuts the guest down, as `shutdown -p now`
