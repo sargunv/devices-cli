@@ -21,18 +21,21 @@ import (
 type Platform struct {
 	// Kind is the devices-cli kind, such as "ios".
 	Kind string
-	// Name is the simctl platform, such as "iOS".
+	// Name is the platform's name, such as "iOS".
 	Name string
+	// Runtime is the platform simctl lists its runtimes under, which for
+	// visionOS is "xrOS".
+	Runtime string
 	// Family is the device family to pick when no device type is named.
 	Family string
 }
 
 // Platforms lists the simulator kinds.
 var Platforms = []Platform{
-	{Kind: "ios", Name: "iOS", Family: "iPhone"},
-	{Kind: "tvos", Name: "tvOS", Family: "Apple TV"},
-	{Kind: "visionos", Name: "visionOS", Family: "Apple Vision"},
-	{Kind: "watchos", Name: "watchOS", Family: "Apple Watch"},
+	{Kind: "ios", Name: "iOS", Runtime: "iOS", Family: "iPhone"},
+	{Kind: "tvos", Name: "tvOS", Runtime: "tvOS", Family: "Apple TV"},
+	{Kind: "visionos", Name: "visionOS", Runtime: "xrOS", Family: "Apple Vision"},
+	{Kind: "watchos", Name: "watchOS", Runtime: "watchOS", Family: "Apple Watch"},
 }
 
 // namePrefix marks the simulators that devices-cli owns; it never touches
@@ -102,7 +105,7 @@ func NewRequest(ctx context.Context, platform Platform, version, deviceTypeName 
 	var candidates []runtime
 	var versions []string
 	for _, rt := range list.Runtimes {
-		if rt.Platform != platform.Name || !rt.IsAvailable {
+		if rt.Platform != platform.Runtime || !rt.IsAvailable {
 			continue
 		}
 		versions = append(versions, rt.Version)

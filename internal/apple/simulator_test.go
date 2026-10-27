@@ -19,7 +19,9 @@ const runtimesJSON = `{"runtimes": [
   {"identifier": "rt.iOS-28-0", "version": "28.0", "platform": "iOS", "isAvailable": false,
    "supportedDeviceTypes": []},
   {"identifier": "rt.tvOS-26-0", "version": "26.0", "platform": "tvOS", "isAvailable": true,
-   "supportedDeviceTypes": [{"identifier": "dt.tv", "name": "Apple TV", "productFamily": "Apple TV"}]}
+   "supportedDeviceTypes": [{"identifier": "dt.tv", "name": "Apple TV", "productFamily": "Apple TV"}]},
+  {"identifier": "rt.xrOS-26-4", "version": "26.4.1", "platform": "xrOS", "isAvailable": true,
+   "supportedDeviceTypes": [{"identifier": "dt.vision", "name": "Apple Vision Pro", "productFamily": "Apple Vision"}]}
 ]}`
 
 const devicesJSON = `{"devices": {"rt.iOS-26-4": [
@@ -83,6 +85,17 @@ func TestNewRequest(t *testing.T) {
 		if _, err := NewRequest(t.Context(), ios, tc.version, tc.deviceType); err == nil || !strings.Contains(err.Error(), tc.message) {
 			t.Errorf("NewRequest(%q, %q) = %v, want an error with %q", tc.version, tc.deviceType, err, tc.message)
 		}
+	}
+}
+
+func TestNewRequestFindsVisionOSUnderXROS(t *testing.T) {
+	fakeXcrun(t)
+	req, err := NewRequest(t.Context(), Platforms[2], "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Runtime.Identifier != "rt.xrOS-26-4" || req.DeviceType.Identifier != "dt.vision" {
+		t.Errorf("NewRequest = %s %s, want rt.xrOS-26-4 dt.vision", req.Runtime.Identifier, req.DeviceType.Identifier)
 	}
 }
 
