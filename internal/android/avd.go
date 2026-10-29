@@ -1,10 +1,12 @@
 package android
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -40,8 +42,9 @@ func imagePackage(api, variant, abi string) []string {
 }
 
 // writeDefinition creates the AVD files for an image unless they exist. The
-// hardware is a mid-size phone; anything else is a launch flag.
-func writeDefinition(name, api, variant, abi string) error {
+// default hardware is a mid-size phone; explicit profiles come from avdmanager.
+func (r *Request) writeDefinition(ctx context.Context) error {
+	name, api, variant, abi := r.Definition(), r.API, r.Variant, r.ABI
 	home, err := avdHome()
 	if err != nil {
 		return err
@@ -50,6 +53,20 @@ func writeDefinition(name, api, variant, abi string) error {
 	dir := filepath.Join(home, name+".avd")
 	config := filepath.Join(dir, "config.ini")
 	if fileExists(ini) && fileExists(config) {
+		return nil
+	}
+
+	if r.DeviceProfile != "" {
+		tool := r.SDK.findTool("avdmanager")
+		if tool == "" {
+			return fmt.Errorf("hardware profile %s needs avdmanager: install Android SDK command-line tools", r.DeviceProfile)
+		}
+		cmd := exec.CommandContext(ctx, tool, "create", "avd", "--force", "--name", name, "--package", strings.Join(imagePackage(api, variant, abi), ";"), "--device", r.DeviceProfile)
+		cmd.Stdin = strings.NewReader("no\n")
+		cmd.Stdout, cmd.Stderr = r.Log, r.Log
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("create AVD with profile %s (see avdmanager list device): %w", r.DeviceProfile, err)
+		}
 		return nil
 	}
 

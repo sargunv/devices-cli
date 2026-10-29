@@ -250,11 +250,16 @@ func (m *Manager) Assign(ctx context.Context, ownerPath, kind, id string) error 
 
 // Release stops the owner's instances and unpins its devices.
 func (m *Manager) Release(ctx context.Context, ownerPath string) error {
+	return m.ReleaseKind(ctx, ownerPath, "")
+}
+
+// ReleaseKind releases the owner's devices of one kind; an empty kind releases all.
+func (m *Manager) ReleaseKind(ctx context.Context, ownerPath, kind string) error {
 	return m.Store.Update(func(st *state.State) error {
 		m.collect(ctx, st)
 		var errs []error
 		st.Instances = slices.DeleteFunc(st.Instances, func(in state.Instance) bool {
-			if in.Owner != ownerPath {
+			if in.Owner != ownerPath || (kind != "" && in.Kind != kind) {
 				return false
 			}
 			if err := m.stop(ctx, in); err != nil {
@@ -265,7 +270,7 @@ func (m *Manager) Release(ctx context.Context, ownerPath string) error {
 			return true
 		})
 		st.Pins = slices.DeleteFunc(st.Pins, func(p state.Pin) bool {
-			if p.Owner != ownerPath {
+			if p.Owner != ownerPath || (kind != "" && p.Kind != kind) {
 				return false
 			}
 			m.logf("unassigned %s", p.ID)

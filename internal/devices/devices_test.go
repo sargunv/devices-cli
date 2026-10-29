@@ -340,3 +340,32 @@ func TestGetOfAPinnedDeviceCollectsFirst(t *testing.T) {
 		t.Errorf("stopped %v; want the instance whose owner is gone", kind.stopped)
 	}
 }
+
+func TestReleaseKindKeepsOtherKinds(t *testing.T) {
+	kind := newFakeKind()
+	m := newManager(t, kind)
+	owner := t.TempDir()
+	id, err := m.Get(t.Context(), owner, fakeRequest{kind, "x"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Kinds["other"] = kind
+	kind.alive["other-instance"] = true
+	if err := m.Store.Update(func(st *state.State) error {
+		st.Instances = append(st.Instances, state.Instance{Owner: owner, Kind: "other", ID: "other-instance", LastUsed: time.Now()})
+		st.Pins = append(st.Pins, state.Pin{Owner: owner, Kind: "other", ID: "other-pin"}, state.Pin{Owner: owner, Kind: "fake", ID: "fake-pin"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ReleaseKind(t.Context(), owner, "fake"); err != nil {
+		t.Fatal(err)
+	}
+	st, err := m.Store.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind.alive[id] || !kind.alive["other-instance"] || len(st.Instances) != 1 || len(st.Pins) != 1 || st.Pins[0].Kind != "other" {
+		t.Fatalf("release affected another kind: %+v", st)
+	}
+}
