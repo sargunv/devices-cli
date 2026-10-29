@@ -39,6 +39,10 @@ type Request struct {
 	Variant string
 	// ABI is the system image ABI, such as "arm64-v8a".
 	ABI string
+	// DeviceProfile is an avdmanager hardware profile, such as wearos_small_round.
+	DeviceProfile string
+	// Headful opens an emulator window. The default is headless.
+	Headful bool
 	// Args are extra emulator flags.
 	Args []string
 	// LogDir receives one log file per emulator.
@@ -72,8 +76,11 @@ func (r *Request) Validate() error {
 	if _, ok := cpuArch[r.ABI]; !ok {
 		return fmt.Errorf("--abi %q is not one of arm64-v8a, x86_64, x86, or armeabi-v7a", r.ABI)
 	}
+	if r.DeviceProfile != "" && !variantPattern.MatchString(r.DeviceProfile) {
+		return fmt.Errorf("--device-profile %q must be an avdmanager profile ID such as wearos_small_round", r.DeviceProfile)
+	}
 	for _, arg := range r.Args {
-		if arg == "-avd" || arg == "-port" || arg == "-ports" || arg == "-read-only" || strings.HasPrefix(arg, "@") {
+		if arg == "-avd" || arg == "-port" || arg == "-ports" || arg == "-read-only" || arg == "-no-window" || arg == "-qt-hide-window" || strings.HasPrefix(arg, "@") {
 			return fmt.Errorf("emulator flag %s is set by devices-cli and cannot be passed", arg)
 		}
 	}
@@ -85,17 +92,31 @@ func (r *Request) Kind() string { return KindName }
 
 // Definition implements devices.Request.
 func (r *Request) Definition() string {
-	return definitionPrefix + strings.Join([]string{"android", r.API, r.Variant, r.ABI}, "-")
+	name := definitionPrefix + strings.Join([]string{"android", r.API, r.Variant, r.ABI}, "-")
+	if r.DeviceProfile != "" {
+		name += "-profile-" + r.DeviceProfile
+	}
+	return name
 }
 
 // Key implements devices.Request.
 func (r *Request) Key() string {
-	return strings.Join(append([]string{r.Definition()}, r.Args...), " ")
+	mode := "headless"
+	if r.Headful {
+		mode = "headful"
+	}
+	return strings.Join(append([]string{r.Definition(), mode}, r.Args...), " ")
 }
 
 // Description implements devices.Request.
 func (r *Request) Description() string {
 	desc := fmt.Sprintf("android-%s %s %s", r.API, r.Variant, r.ABI)
+	if r.DeviceProfile != "" {
+		desc += " " + r.DeviceProfile
+	}
+	if r.Headful {
+		desc += " headful"
+	}
 	if len(r.Args) > 0 {
 		desc += " " + strings.Join(r.Args, " ")
 	}
@@ -120,7 +141,7 @@ func (r *Request) Prepare(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := writeDefinition(r.Definition(), r.API, r.Variant, r.ABI); err != nil {
+	if err := r.writeDefinition(ctx); err != nil {
 		return err
 	}
 	marker, err := primedMarker(r.Definition())
@@ -150,7 +171,7 @@ func (r *Request) prime(ctx context.Context) error {
 		return fmt.Errorf("no free emulator console port above %d to set up %s", lastPort, r.Definition())
 	}
 	fmt.Fprintf(r.Log, "devices-cli: booting new AVD %s once to set it up\n", r.Definition())
-	inst, err := r.launch(port, filepath.Join(r.LogDir, "prime-"+r.Definition()+".log"), nil)
+	inst, err := r.launch(port, filepath.Join(r.LogDir, "prime-"+r.Definition()+".log"), nil, false)
 	if err != nil {
 		return err
 	}
@@ -165,7 +186,7 @@ func (r *Request) Start(_ context.Context, owner string, running []state.Instanc
 	if err != nil {
 		return state.Instance{}, err
 	}
-	inst, err := r.launch(port, filepath.Join(r.LogDir, fmt.Sprintf("emulator-%d.log", port)), r.Args)
+	inst, err := r.launch(port, filepath.Join(r.LogDir, fmt.Sprintf("emulator-%d.log", port)), r.Args, r.Headful)
 	if err != nil {
 		return state.Instance{}, err
 	}
@@ -180,7 +201,7 @@ func (r *Request) Start(_ context.Context, owner string, running []state.Instanc
 
 // launch starts a read-only emulator of the AVD on a console port, logging to
 // logPath, which it replaces.
-func (r *Request) launch(port int, logPath string, extra []string) (state.Instance, error) {
+func (r *Request) launch(port int, logPath string, extra []string, headful bool) (state.Instance, error) {
 	if err := os.MkdirAll(r.LogDir, 0o755); err != nil {
 		return state.Instance{}, err
 	}
@@ -196,11 +217,13 @@ func (r *Request) launch(port int, logPath string, extra []string) (state.Instan
 		"-avd", r.Definition(),
 		"-read-only",
 		"-port", strconv.Itoa(port),
-		"-no-window",
 		"-no-audio",
 		"-no-boot-anim",
 		"-no-snapshot",
 		"-no-metrics",
+	}
+	if !headful {
+		args = append(args, "-no-window")
 	}
 	cmd := exec.Command(r.SDK.emulatorPath(), append(args, extra...)...)
 	cmd.Env = append(os.Environ(), "ANDROID_HOME="+r.SDK.Root, "ANDROID_SDK_ROOT="+r.SDK.Root, "ADB_MDNS=0")
@@ -257,6 +280,9 @@ func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 // MatchPin checks that a pinned physical device is connected and runs the
 // requested API level and ABI. The image variant does not apply to it.
 func (r *Request) MatchPin(ctx context.Context, serial string) error {
+	if r.DeviceProfile != "" {
+		return errors.New("a hardware profile requires an emulator")
+	}
 	if err := r.SDK.Connected(ctx, serial); err != nil {
 		return errors.New("it is not connected")
 	}

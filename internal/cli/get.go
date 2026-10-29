@@ -130,11 +130,12 @@ first when it is connected and runs the API level and ABI. Otherwise get
 returns the worktree's emulator for the system image, starting one that runs
 until it is released, idle too long, or its worktree is gone.
 
-Emulators run read-only from one AVD per system image, which devices-cli
+Emulators run headless by default; --headful opens a window.
+Each hardware profile has its own AVD. Emulators run read-only from one AVD per system image, which devices-cli
 creates on first use, installing the image into $ANDROID_HOME if it is
 missing. Flags after -- go to the emulator, and an instance only matches a
 request with the same flags. devices-cli sets -avd, -port, -read-only,
--no-window, -no-audio, -no-boot-anim, -no-snapshot, and -no-metrics.`,
+-no-window (unless --headful), -no-audio, -no-boot-anim, -no-snapshot, and -no-metrics.`,
 		Example: `  devices-cli get android --api 36
   devices-cli get android --api 34 --variant google_apis --abi x86_64
   devices-cli get android --api 36 -- -gpu swiftshader -memory 4096`,
@@ -161,6 +162,8 @@ request with the same flags. devices-cli sets -avd, -port, -read-only,
 	cmd.Flags().StringVar(&req.API, "api", "", "API level of the system image, such as 36 (required)")
 	cmd.Flags().StringVar(&req.ABI, "abi", android.HostABI(), "ABI of the system image")
 	cmd.Flags().StringVar(&req.Variant, "variant", "default", "system image variant, such as default, google_apis, or google_apis_playstore")
+	cmd.Flags().BoolVar(&req.Headful, "headful", false, "open an emulator window (default: headless)")
+	cmd.Flags().StringVar(&req.DeviceProfile, "device-profile", "", "avdmanager hardware profile ID, such as wearos_small_round or tv_1080p")
 	_ = cmd.MarkFlagRequired("api")
 	return cmd
 }

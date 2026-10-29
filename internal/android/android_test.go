@@ -240,3 +240,69 @@ func TestRemoveDefinition(t *testing.T) {
 		t.Error("removed an AVD that devices-cli did not create")
 	}
 }
+
+// Profile and window mode must not reuse a device with different hardware or UI.
+func TestProfileAndWindowIdentity(t *testing.T) {
+	sdk := fakeSDK(t)
+	req := newRequest(t, sdk)
+	baseKey, baseDefinition := req.Key(), req.Definition()
+	req.Headful = true
+	if req.Key() == baseKey || req.Definition() != baseDefinition {
+		t.Fatal("window mode must change instance identity, not the shared AVD")
+	}
+	req.DeviceProfile = "wearos_small_round"
+	if req.Definition() == baseDefinition {
+		t.Fatal("profile must change the AVD")
+	}
+	wearDefinition := req.Definition()
+	req.DeviceProfile = "tv_1080p"
+	if req.Definition() == wearDefinition {
+		t.Fatal("TV reused the watch AVD")
+	}
+	for _, headful := range []bool{false, true} {
+		req.Headful = headful
+		inst, err := req.Start(t.Context(), "/owner", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := req.WaitReady(t.Context(), inst); err != nil {
+			t.Fatal(err)
+		}
+		if err := (Kind{}).Stop(t.Context(), inst); err != nil {
+			t.Fatal(err)
+		}
+		launches, err := os.ReadFile(filepath.Join(sdk.Root, "launches"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(launches)), "\n")
+		if strings.Contains(lines[len(lines)-1], "-no-window") == headful {
+			t.Fatalf("headful=%v: %s", headful, lines[len(lines)-1])
+		}
+	}
+}
+
+func TestHardwareProfilesUseAvdmanager(t *testing.T) {
+	sdk := fakeSDK(t)
+	writeScript(t, filepath.Join(sdk.Root, "cmdline-tools", "latest", "bin", "avdmanager"), `#!/bin/sh
+printf '%s\n' "$*" >> "$(dirname "$0")/profiles"
+`)
+	for _, profile := range []string{"wearos_small_round", "tv_1080p"} {
+		req := newRequest(t, sdk)
+		req.DeviceProfile = profile
+		if err := req.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if err := req.writeDefinition(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		calls, err := os.ReadFile(filepath.Join(sdk.Root, "cmdline-tools", "latest", "bin", "profiles"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "create avd --force --name " + req.Definition() + " --package system-images;android-36;default;arm64-v8a --device " + profile
+		if !strings.Contains(string(calls), want+"\n") {
+			t.Fatalf("missing %s in %s", want, calls)
+		}
+	}
+}

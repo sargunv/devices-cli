@@ -60,17 +60,25 @@ export ANDROID_SERIAL=${ANDROID_SERIAL:-$(devices-cli get android --api 36)}
 ### Android emulators
 
 ```sh
-devices-cli get android --api <level> [--abi <abi>] [--variant <tag>] [-- <emulator flags>]
+devices-cli get android --api <level> [--abi <abi>] [--variant <tag>] [--device-profile <id>] [--headful] [-- <emulator flags>]
 ```
 
 - `--api` is the system image's API level, such as `36` or `36.1`.
 - `--abi` defaults to the host's: `arm64-v8a` on arm64, `x86_64` elsewhere.
 - `--variant` is the image tag: `default` (AOSP, the default), `google_apis`,
   `google_apis_playstore`, and so on.
+- `--headful` opens a window; emulators are headless by default. Window mode is
+  part of request identity, so a headful request never reuses a headless
+  instance.
+- `--device-profile` selects an avdmanager hardware profile ID, such as
+  `wearos_small_round` or `tv_1080p`. It requires SDK command-line tools and
+  gets its own AVD. Use the matching Wear OS or Android TV `--variant` too.
+  Profile requests use emulators even when a physical device is assigned.
 - Flags after `--` go to the emulator, such as `-gpu swiftshader` or
   `-memory 4096`. A running instance only matches a request with the same flags.
-  devices-cli sets `-avd`, `-port`, `-read-only`, `-no-window`, `-no-audio`,
-  `-no-boot-anim`, `-no-snapshot`, and `-no-metrics` itself.
+  devices-cli sets `-avd`, `-port`, `-read-only`, `-no-window` (unless
+  `--headful`), `-no-audio`, `-no-boot-anim`, `-no-snapshot`, and `-no-metrics`
+  itself.
 
 The Android SDK comes from `ANDROID_HOME` (or `ANDROID_SDK_ROOT`), which a
 project usually sets in its mise environment. When the SDK lacks
@@ -178,7 +186,8 @@ releases it.
 ### Other commands
 
 - `devices-cli release` stops the worktree's instances and unassigns its
-  devices.
+  devices. `--kind android` releases only Android devices, leaving Apple
+  simulators and other kinds running.
 - `devices-cli ls` lists running instances and assigned devices with their
   owners and idle times; `--json` adds the definitions.
 - `devices-cli gc` collects what is no longer needed (see below).

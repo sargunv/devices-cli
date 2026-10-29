@@ -55,7 +55,7 @@ worktree.`,
 }
 
 func (a *app) releaseCommand() *cobra.Command {
-	var ownerFlag string
+	var ownerFlag, kind string
 	cmd := &cobra.Command{
 		Use:   "release",
 		Short: "Stop this worktree's instances and unassign its devices",
@@ -69,10 +69,16 @@ func (a *app) releaseCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return m.Release(cmd.Context(), ownerPath)
+			if kind != "" {
+				if _, ok := m.Kinds[kind]; !ok {
+					return fmt.Errorf("unknown device kind %q; use a kind shown by devices-cli get --help", kind)
+				}
+			}
+			return m.ReleaseKind(cmd.Context(), ownerPath, kind)
 		},
 	}
 	cmd.Flags().StringVar(&ownerFlag, "owner", "", "directory whose devices to release (default: the git worktree of the working directory)")
+	cmd.Flags().StringVar(&kind, "kind", "", "release only this device kind, such as android or ios (default: all)")
 	return cmd
 }
 
