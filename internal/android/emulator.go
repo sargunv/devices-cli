@@ -221,6 +221,9 @@ func (r *Request) launch(port int, logPath string, extra []string, headful bool)
 		"-no-boot-anim",
 		"-no-snapshot",
 		"-no-metrics",
+		// -no-metrics leaves crash reporting on, whose consent dialog can
+		// block startup.
+		"-crash-report-mode", "disabled",
 	}
 	if !headful {
 		args = append(args, "-no-window")

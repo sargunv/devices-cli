@@ -135,7 +135,8 @@ Each hardware profile has its own AVD. Emulators run read-only from one AVD per 
 creates on first use, installing the image into $ANDROID_HOME if it is
 missing. Flags after -- go to the emulator, and an instance only matches a
 request with the same flags. devices-cli sets -avd, -port, -read-only,
--no-window (unless --headful), -no-audio, -no-boot-anim, -no-snapshot, and -no-metrics.`,
+-no-window (unless --headful), -no-audio, -no-boot-anim, -no-snapshot,
+-no-metrics, and -crash-report-mode disabled.`,
 		Example: `  devices-cli get android --api 36
   devices-cli get android --api 34 --variant google_apis --abi x86_64
   devices-cli get android --api 36 -- -gpu swiftshader -memory 4096`,

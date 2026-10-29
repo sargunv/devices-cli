@@ -100,6 +100,9 @@ func TestPrepareInstallsPackagesAndPrimesTheAVD(t *testing.T) {
 		!strings.Contains(lines[0], "-avd "+req.Definition()+" -read-only -port "+strconv.Itoa(lastPort+2)) {
 		t.Errorf("emulator launches:\n%s\nwant one read-only launch above the instances' ports", launches)
 	}
+	if !strings.Contains(string(launches), " -crash-report-mode disabled") {
+		t.Errorf("emulator launches:\n%s\nwant crash reporting disabled", launches)
+	}
 
 	calls, err := os.ReadFile(filepath.Join(sdk.Root, "cmdline-tools", "latest", "bin", "calls"))
 	if err != nil {
