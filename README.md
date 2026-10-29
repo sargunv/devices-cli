@@ -77,8 +77,8 @@ devices-cli get android --api <level> [--abi <abi>] [--variant <tag>] [--device-
 - Flags after `--` go to the emulator, such as `-gpu swiftshader` or
   `-memory 4096`. A running instance only matches a request with the same flags.
   devices-cli sets `-avd`, `-port`, `-read-only`, `-no-window` (unless
-  `--headful`), `-no-audio`, `-no-boot-anim`, `-no-snapshot`, and `-no-metrics`
-  itself.
+  `--headful`), `-no-audio`, `-no-boot-anim`, `-no-snapshot`, `-no-metrics`, and
+  `-crash-report-mode disabled` itself.
 
 The Android SDK comes from `ANDROID_HOME` (or `ANDROID_SDK_ROOT`), which a
 project usually sets in its mise environment. When the SDK lacks
