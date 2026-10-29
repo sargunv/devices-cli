@@ -101,11 +101,11 @@ func (r *Request) Definition() string {
 
 // Key implements devices.Request.
 func (r *Request) Key() string {
-	mode := "headless"
+	parts := []string{r.Definition()}
 	if r.Headful {
-		mode = "headful"
+		parts = append(parts, "headful")
 	}
-	return strings.Join(append([]string{r.Definition(), mode}, r.Args...), " ")
+	return strings.Join(append(parts, r.Args...), " ")
 }
 
 // Description implements devices.Request.

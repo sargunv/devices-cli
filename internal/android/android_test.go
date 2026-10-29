@@ -246,6 +246,14 @@ func TestProfileAndWindowIdentity(t *testing.T) {
 	sdk := fakeSDK(t)
 	req := newRequest(t, sdk)
 	baseKey, baseDefinition := req.Key(), req.Definition()
+	if baseKey != baseDefinition {
+		t.Fatal("default request must reuse the existing headless key")
+	}
+	req.Args = []string{"-gpu", "host"}
+	if want := baseDefinition + " -gpu host"; req.Key() != want {
+		t.Fatalf("headless key = %q, want existing key %q", req.Key(), want)
+	}
+	req.Args = nil
 	req.Headful = true
 	if req.Key() == baseKey || req.Definition() != baseDefinition {
 		t.Fatal("window mode must change instance identity, not the shared AVD")
