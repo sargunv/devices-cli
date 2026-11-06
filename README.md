@@ -130,7 +130,9 @@ devices-cli get ohos
 ```
 
 prints the hdc connect key, such as `127.0.0.1:56000`, of the worktree's
-OpenHarmony emulator once `hdc -t <key> shell` works in it:
+OpenHarmony emulator once an application can install and launch in it: the
+system has finished booting, user 100 is active, and devices-cli has unlocked
+the screen:
 
 ```sh
 hdc -t "$(devices-cli get ohos)" shell uname -a
@@ -144,7 +146,7 @@ and `.img` files. `qemu-system-x86_64` and `hdc` (from the OpenHarmony SDK's
 so instances share the image and never change it, and forwards the guest's hdc
 port to a host port from 56000 up. QEMU uses KVM on an x86_64 Linux host that
 has it and emulates the machine elsewhere; on an Apple silicon laptop an
-instance answers hdc in about 30 seconds.
+instance is ready in about a minute.
 
 ### FreeBSD virtual machines
 
