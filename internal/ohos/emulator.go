@@ -30,6 +30,15 @@ const (
 	guestPort = 55555
 )
 
+// The guest's screen size, which the unlock swipe spans.
+const (
+	screenWidth  = 360
+	screenHeight = 720
+)
+
+// pollInterval separates readiness checks while an instance boots.
+var pollInterval = 2 * time.Second
+
 var images = []string{"bzImage", "ramdisk.img", "updater.img", "system.img", "vendor.img", "userdata.img"}
 
 // Request asks for an emulator of the Oniro image in a directory.
@@ -152,7 +161,7 @@ func (r *Request) args(port int) []string {
 		"-m", "4096M",
 		"-boot", "c",
 		"-vga", "none",
-		"-device", "virtio-gpu-pci,xres=360,yres=720,max_outputs=1,addr=08.0",
+		"-device", fmt.Sprintf("virtio-gpu-pci,xres=%d,yres=%d,max_outputs=1,addr=08.0", screenWidth, screenHeight),
 		"-display", "none",
 		"-serial", "stdio",
 		"-monitor", "none",
@@ -190,7 +199,9 @@ func kvmAvailable() bool {
 	return true
 }
 
-// WaitReady waits until hdc connects to the instance and runs a shell command.
+// WaitReady waits until an application can install and launch on the
+// instance: hdc runs shell commands in it, the system has finished booting,
+// the foreground user is active, and the screen is unlocked.
 func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 	deadline := time.Now().Add(r.BootTimeout)
 	for {
@@ -202,26 +213,93 @@ func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("OpenHarmony emulator %s did not answer hdc within %s (last: %w)%s",
+			return fmt.Errorf("OpenHarmony emulator %s was not ready within %s (last: %w); pass a longer --boot-timeout if the machine is busy%s",
 				inst.ID, r.BootTimeout, err, process.LogTail(inst.Log))
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(2 * time.Second):
+		case <-time.After(pollInterval):
 		}
 	}
 }
 
+// ready checks each stage of the boot once, in order, and reports the first
+// that has not finished. A locked screen gets an unlock attempt, which the
+// next check confirms.
 func (r *Request) ready(ctx context.Context, key string) error {
 	if _, err := hdc(ctx, r.HDC, "tconn", key); err != nil {
 		return fmt.Errorf("hdc tconn %s: %w", key, err)
 	}
-	out, err := hdc(ctx, r.HDC, "-t", key, "shell", "echo", "ready")
-	if err != nil || out != "ready" {
-		return fmt.Errorf("hdc -t %s shell echo ready: %w: %s", key, err, out)
+	shell := func(command ...string) (string, error) {
+		out, err := hdc(ctx, r.HDC, append([]string{"-t", key, "shell"}, command...)...)
+		if err != nil {
+			return out, fmt.Errorf("hdc -t %s shell %s: %w: %s", key, strings.Join(command, " "), err, out)
+		}
+		return out, nil
+	}
+	if out, err := shell("echo", "ready"); err != nil {
+		return err
+	} else if out != "ready" {
+		return fmt.Errorf("hdc -t %s shell echo ready printed %q", key, out)
+	}
+	// hdc answers well before the system services start.
+	if out, err := shell("param", "get", "bootevent.boot.completed"); err != nil {
+		return err
+	} else if out != "true" {
+		return fmt.Errorf("the system has not finished booting (bootevent.boot.completed: %s)", out)
+	}
+	// Until the account service activates the foreground user, installs fail
+	// with "user not exist".
+	if out, err := shell("acm", "dump", "-i", strconv.Itoa(foregroundUser)); err != nil {
+		return err
+	} else if !accountActive(out) {
+		return fmt.Errorf("user %d is not active yet", foregroundUser)
+	}
+	// The screen boots locked, and in developer mode an application launch
+	// fails instead of unlocking it. The image has no lock screen application,
+	// so a swipe up dismisses the lock; neither a wakeup nor a Home key does.
+	out, err := shell("hidumper", "-s", "ScreenlockService", "-a", "-all")
+	if err != nil {
+		return err
+	}
+	locked, ok := screenLocked(out)
+	if !ok {
+		return errors.New("the screen lock service has not reported its state yet")
+	}
+	if locked {
+		x := strconv.Itoa(screenWidth / 2)
+		if _, err := shell("uinput", "-T", "-m", x, strconv.Itoa(screenHeight*9/10), x, strconv.Itoa(screenHeight/10), "300"); err != nil {
+			return err
+		}
+		return errors.New("the screen is locked")
 	}
 	return nil
+}
+
+// foregroundUser is the OpenHarmony user that hdc installs and launches as.
+const foregroundUser = 100
+
+// accountActive reads `acm dump -i <user>` output.
+func accountActive(dump string) bool {
+	for line := range strings.Lines(dump) {
+		if strings.TrimSpace(line) == "Status: active" {
+			return true
+		}
+	}
+	return false
+}
+
+// screenLocked reads the screenLocked row of the screen lock service's dump,
+// such as " * screenLocked\t\tfalse\t\t100", and reports whether it found one.
+func screenLocked(dump string) (locked, ok bool) {
+	for line := range strings.Lines(dump) {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[0] == "*" && fields[1] == "screenLocked" {
+			return fields[2] == "true", true
+		}
+	}
+	return false, false
 }
 
 // hdc runs an hdc command with a deadline, since a call to a guest that is
