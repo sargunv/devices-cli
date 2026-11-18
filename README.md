@@ -141,12 +141,13 @@ hdc -t "$(devices-cli get ohos)" shell uname -a
 The emulator is QEMU running the
 [Oniro emulator image](https://github.com/eclipse-oniro4openharmony/device_board_oniro/releases)
 from the directory that `OHOS_EMULATOR_IMAGES` names, which holds its `bzImage`
-and `.img` files. `qemu-system-x86_64` and `hdc` (from the OpenHarmony SDK's
-`toolchains` directory) must be on `PATH`. Each instance runs with `-snapshot`,
-so instances share the image and never change it, and forwards the guest's hdc
-port to a host port from 56000 up. QEMU uses KVM on an x86_64 Linux host that
-has it and emulates the machine elsewhere; on an Apple silicon laptop an
-instance is ready in about a minute.
+and `.img` files. `qemu-system-x86_64`, `qemu-img` and `hdc` (from the
+OpenHarmony SDK's `toolchains` directory) must be on `PATH`. Each instance runs
+with `-snapshot`, so instances share the image and never change it, and forwards
+the guest's hdc port to a host port from 56000 up. Its data partition, where
+`exec` copies programs, grows from the image's 1.3 GB to 16 GB. QEMU uses KVM on
+an x86_64 Linux host that has it and emulates the machine elsewhere; on an Apple
+silicon laptop an instance is ready in about a minute.
 
 ### HarmonyOS emulators
 
