@@ -48,3 +48,29 @@ func TestStreamFailsWithoutAStatus(t *testing.T) {
 		t.Fatal("a shell that never reports a status succeeded")
 	}
 }
+
+func TestRecvStderrKeepsTheFilesBytes(t *testing.T) {
+	want := "line one\r\n  indented\n\ntrailing, no newline"
+	payload := filepath.Join(t.TempDir(), "payload")
+	if err := os.WriteFile(payload, []byte(want), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// hdc file recv copies the payload; hdc shell reports success.
+	script := `#!/bin/sh
+case "$3 $4" in
+"file recv") cp "` + payload + `" "$6" ;;
+*) printf '\n` + statusMarker + `0\n' ;;
+esac
+`
+	hdcPath := filepath.Join(t.TempDir(), "hdc")
+	if err := os.WriteFile(hdcPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var got bytes.Buffer
+	if err := (hdcShell{path: hdcPath, key: "k"}).recvStderr(context.Background(), "/data/err", &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.String() != want {
+		t.Errorf("stderr = %q; want %q", got.String(), want)
+	}
+}

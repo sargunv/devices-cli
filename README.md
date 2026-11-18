@@ -209,8 +209,9 @@ directories and directories with a `CACHEDIR.TAG`, such as Cargo's `target`, are
 left out. Android and OpenHarmony devices keep the copies in
 `/data/local/tmp/devices-cli`. Apple simulators and FreeBSD VMs see the host's
 paths, so nothing is copied; a FreeBSD VM's program and synced directories must
-lie in the worktree, which the VM mounts. On OpenHarmony, the program's stderr
-arrives after it exits.
+lie in the worktree, which the VM mounts. A simulator starts the program in its
+own data directory, not the working directory. On OpenHarmony, the program's
+stderr arrives after it exits.
 
 `exec` works as Cargo's
 [target runner](https://doc.rust-lang.org/cargo/reference/config.html#targettriplerunner),

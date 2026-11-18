@@ -47,8 +47,9 @@ CACHEDIR.TAG, such as Cargo's target directory, are left out.
 
 Apple simulators and FreeBSD VMs see the host's paths, so nothing is copied
 there; the program and the synced directories of a FreeBSD VM must lie in the
-worktree, which the VM mounts. On OpenHarmony, the program's stderr arrives
-after it exits.
+worktree, which the VM mounts. A simulator starts the program in its own data
+directory, not the working directory. On OpenHarmony, the program's stderr
+arrives after it exits.
 
 exec works as Cargo's target runner, which appends the program and its
 arguments to the command. End the runner with --, so that the program's

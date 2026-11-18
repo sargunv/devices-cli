@@ -186,7 +186,7 @@ func TestAndroidEmulators(t *testing.T) {
 		t.Errorf("reusing an instance took %s", elapsed)
 	}
 
-	e.checkExec(a, true, shellProgram("/system/bin/sh"), request...)
+	e.checkExec(a, true, true, shellProgram("/system/bin/sh"), request...)
 
 	// Both slots are taken.
 	if _, stderr, err := e.run(e.owner(), append([]string{"get", "--wait", "0"}, request...)...); err == nil || !strings.Contains(stderr, "max_instances") {
@@ -239,7 +239,7 @@ func TestAppleSimulators(t *testing.T) {
 	if id := e.get(a, "ios"); id != udidA {
 		t.Errorf("a got %s, then %s", udidA, id)
 	}
-	e.checkExec(a, false, e.simulatorProgram, "ios")
+	e.checkExec(a, false, false, e.simulatorProgram, "ios")
 
 	// A simulator whose owner is gone is deleted at the next command, and a
 	// released one is deleted too.
@@ -287,7 +287,7 @@ func TestOHOSEmulators(t *testing.T) {
 	if id := e.get(a, "ohos"); id != keyA {
 		t.Errorf("a got %s, then %s", keyA, id)
 	}
-	e.checkExec(a, true, shellProgram("/system/bin/sh"), "ohos")
+	e.checkExec(a, true, true, shellProgram("/system/bin/sh"), "ohos")
 
 	if err := os.RemoveAll(b); err != nil {
 		t.Fatal(err)
@@ -342,7 +342,7 @@ func TestFreeBSDVMs(t *testing.T) {
 	if id := e.get(a, request...); id != hostA {
 		t.Errorf("a got %s, then %s", hostA, id)
 	}
-	e.checkExec(a, false, shellProgram("/bin/sh"), request...)
+	e.checkExec(a, false, true, shellProgram("/bin/sh"), request...)
 
 	// Removing b's owner shuts its VM down at the next command; release shuts
 	// a's down.
@@ -369,9 +369,10 @@ func TestFreeBSDVMs(t *testing.T) {
 // checkExec runs a program through exec on the owner's device, with a synced
 // fixture directory that holds a symbolic link, and checks its output, its
 // exit status, and that the paths into the fixtures reach their copy. On a
-// device that sees the host's paths, the copy is the directory itself.
+// device that sees the host's paths, the copy is the directory itself. When
+// keepsDir is set, the program runs in the working directory's copy.
 // program writes the program into a file and returns its path.
-func (e *env) checkExec(owner string, copied bool, program func(dir string) string, request ...string) {
+func (e *env) checkExec(owner string, copied, keepsDir bool, program func(dir string) string, request ...string) {
 	e.t.Helper()
 	fixtures := filepath.Join(owner, "fixtures")
 	if err := os.MkdirAll(fixtures, 0o755); err != nil {
@@ -415,8 +416,8 @@ func (e *env) checkExec(owner string, copied bool, program func(dir string) stri
 		e.t.Error("the program's stderr did not come through")
 	}
 	got := lines["fixtures"]
-	if copied == (got == fixtures) || lines["arg"] != got+"/hello.txt" || lines["pwd"] != got {
-		e.t.Errorf("FIXTURES=%q, arg=%q, pwd=%q; want the fixtures' copy (copied: %v) in each", got, lines["arg"], lines["pwd"], copied)
+	if copied == (got == fixtures) || lines["arg"] != got+"/hello.txt" || keepsDir && lines["pwd"] != got {
+		e.t.Errorf("FIXTURES=%q, arg=%q, pwd=%q; want the fixtures' copy (copied: %v, working directory kept: %v)", got, lines["arg"], lines["pwd"], copied, keepsDir)
 	}
 }
 

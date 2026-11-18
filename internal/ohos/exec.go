@@ -78,12 +78,33 @@ func Exec(ctx context.Context, hdcPath, key, owner string, spec remote.Spec, loc
 	q := remote.ShellQuote
 	script := "(" + cmd.Script() + ") 2>" + q(errFile) + "; printf '\\n" + statusMarker + "%d\\n' $?"
 	status, err := sh.stream(ctx, nil, spec.Stdout, script)
-	// The marker follows a newline of its own, which stream drops, so the
-	// file's bytes reach Stderr as they are.
-	if _, catErr := sh.stream(ctx, nil, spec.Stderr, "cat "+q(errFile)+"; rm -f "+q(errFile)+"; printf '\\n"+statusMarker+"0\\n'"); catErr != nil && err == nil {
-		err = fmt.Errorf("read the program's stderr: %w", catErr)
+	if errOut := sh.recvStderr(ctx, errFile, spec.Stderr); errOut != nil && err == nil {
+		err = fmt.Errorf("read the program's stderr: %w", errOut)
 	}
 	return status, err
+}
+
+// recvStderr copies the file of the program's stderr to w byte for byte, with
+// hdc file recv, and removes it.
+func (h hdcShell) recvStderr(ctx context.Context, remoteFile string, w io.Writer) error {
+	dir, err := os.MkdirTemp("", "devices-cli-stderr-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	local := filepath.Join(dir, "stderr")
+	if _, err := hdc(ctx, h.path, "-t", h.key, "file", "recv", remoteFile, local); err != nil {
+		return err
+	}
+	if _, err := h.Run(ctx, nil, "rm -f "+remote.ShellQuote(remoteFile)); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(local)
+	if err != nil {
+		return fmt.Errorf("hdc file recv %s wrote no file: %w", remoteFile, err)
+	}
+	_, err = w.Write(data)
+	return err
 }
 
 // hdcShell runs commands through "hdc shell" on one device.
