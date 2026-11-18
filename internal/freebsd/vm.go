@@ -220,7 +220,7 @@ func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 		}
 		// anyvm exits once the VM is up. It only warns when the mount fails,
 		// so the mount is checked too.
-		if !process.Running(inst.PID, "anyvm") && ssh(ctx, inst.ID, "true") == nil {
+		if !process.Running(inst.PID, "anyvm") && ssh(ctx, inst.ID, raiseSSHLimits) == nil {
 			if mounted(ctx, inst) {
 				return nil
 			}
@@ -236,6 +236,14 @@ func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 		}
 	}
 }
+
+// raiseSSHLimits lets the guest's sshd take as many connections at once as
+// parallel test runners open, one per program and two per get. sshd's defaults
+// drop connections past 10 that are still authenticating. The guest runs from
+// a snapshot, so the change goes away with it. sshd refuses connections while
+// it reloads, so the probe that reloads it fails, and the next one passes.
+const raiseSSHLimits = "grep -qx 'MaxStartups 1000' /etc/ssh/sshd_config || " +
+	"{ printf 'MaxStartups 1000\\nMaxSessions 1000\\n' >> /etc/ssh/sshd_config && service sshd reload; exit 1; }"
 
 // mounted reports whether the guest has a file system mounted at the owner
 // directory's path: one whose device differs from its parent's.
