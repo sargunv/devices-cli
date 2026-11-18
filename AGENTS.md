@@ -20,6 +20,7 @@ is the user contract; `--help` text must agree with it.
 - `internal/harmonyos/`: per-owner instances of DevEco Studio's HarmonyOS
   emulator, created and started with its `Emulator` command line.
 - `internal/freebsd/`: per-owner FreeBSD VMs through anyvm.
+- `internal/wine/`: per-owner Wine prefixes with native DLLs.
 - `internal/process/`: helpers for the device processes kinds launch.
 - `internal/remote/`: what `exec` runs on a device: path mapping, the copies of
   the program and synced directories, and shell quoting. Each kind's `exec.go`

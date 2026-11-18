@@ -19,6 +19,7 @@ import (
 	"github.com/sargunv/devices-cli/internal/ohos"
 	"github.com/sargunv/devices-cli/internal/remote"
 	"github.com/sargunv/devices-cli/internal/state"
+	"github.com/sargunv/devices-cli/internal/wine"
 )
 
 type execFlags struct {
@@ -46,8 +47,9 @@ unchanged program or directory is not copied again. Symbolic links are copied
 as what they point to, and version control directories and directories with a
 CACHEDIR.TAG, such as Cargo's target directory, are left out.
 
-Apple simulators and FreeBSD VMs see the host's paths, so nothing is copied
-there; the program and the synced directories of a FreeBSD VM must lie in the
+Apple simulators, FreeBSD VMs and Wine prefixes see the host's paths, so
+nothing is copied there, and a Wine program sees the host's environment too;
+the program and the synced directories of a FreeBSD VM must lie in the
 worktree, which the VM mounts. A simulator starts the program in its own data
 directory, not the working directory. On OpenHarmony and HarmonyOS, the
 program's stdout arrives a line behind, and its stderr after it exits.
@@ -171,6 +173,8 @@ func (a *app) exec(cmd *cobra.Command, flags *getFlags, req devices.Request, spe
 		return ohos.Exec(ctx, r.HDC, id, ownerPath, spec, lock)
 	case *freebsd.Request:
 		return freebsd.Exec(ctx, id, ownerPath, spec)
+	case *wine.Request:
+		return wine.Exec(ctx, id, spec)
 	default:
 		return 0, fmt.Errorf("exec does not support %s devices", req.Kind())
 	}

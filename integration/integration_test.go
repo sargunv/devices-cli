@@ -4,7 +4,8 @@
 // it with `mise run integration`. The Android test needs ANDROID_HOME and, on
 // Linux, KVM; the Apple test runs on macOS with Xcode; the OpenHarmony test
 // needs OHOS_EMULATOR_IMAGES and QEMU and hdc on PATH; the FreeBSD test runs
-// on Linux with KVM and needs ANYVM, QEMU, and UEFI firmware.
+// on Linux with KVM and needs ANYVM, QEMU, and UEFI firmware; the Wine test
+// needs wine and wineserver on PATH.
 package integration
 
 import (
@@ -421,6 +422,44 @@ func TestFreeBSDVMs(t *testing.T) {
 		if got := output("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "true"); !strings.Contains(got, "ssh:") {
 			t.Errorf("%s still answers SSH: %q", host, got)
 		}
+	}
+}
+
+func TestWinePrefixes(t *testing.T) {
+	if _, err := exec.LookPath("wine"); err != nil {
+		t.Skip("Wine prefixes need wine on PATH")
+	}
+	e := setup(t, "max_instances = 2\n")
+	a, b := e.owner(), e.owner()
+
+	prefixA, prefixB := e.getConcurrently(a, b, "wine")
+	if prefixA == prefixB {
+		t.Fatalf("a and b share the prefix %s", prefixA)
+	}
+	if id := e.get(a, "wine"); id != prefixA {
+		t.Errorf("a got %s, then %s", prefixA, id)
+	}
+
+	// The program runs in the working directory and reads host paths, and
+	// exec exits with its status.
+	if err := os.WriteFile(filepath.Join(a, "hello.txt"), []byte("hello\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmdExe := filepath.Join(prefixA, "drive_c", "windows", "system32", "cmd.exe")
+	stdout, _, err := e.run(a, "exec", "wine", "--", cmdExe, "/c", "type hello.txt & exit /b 3")
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 {
+		t.Errorf("exec exited with %v, want status 3", err)
+	}
+	if stdout != "hello" {
+		t.Errorf("exec printed %q, want hello", stdout)
+	}
+
+	if _, _, err := e.run(a, "release"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(prefixA); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("release left %s: %v", prefixA, err)
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/sargunv/devices-cli/internal/harmonyos"
 	"github.com/sargunv/devices-cli/internal/ohos"
 	"github.com/sargunv/devices-cli/internal/owner"
+	"github.com/sargunv/devices-cli/internal/wine"
 )
 
 type getFlags struct {
@@ -52,7 +53,7 @@ func (a *app) kindCommands() []kindCommand {
 	for _, platform := range apple.Platforms {
 		kinds = append(kinds, appleKind(platform))
 	}
-	return append(kinds, ohosKind(), harmonyosKind(), freebsdKind())
+	return append(kinds, ohosKind(), harmonyosKind(), freebsdKind(), wineKind())
 }
 
 func (a *app) getCommand() *cobra.Command {
@@ -306,6 +307,40 @@ UEFI firmware, and devices-cli runs FreeBSD VMs only on a Linux host with KVM.`,
 			if req.LogDir, err = logDir(); err != nil {
 				return nil, err
 			}
+			req.BootTimeout = flags.bootTimeout
+			return req, nil
+		},
+	}
+}
+
+func wineKind() kindCommand {
+	var dlls []string
+	return kindCommand{
+		name:   wine.KindName,
+		usage:  " [--dll <path>]...",
+		id:     "WINEPREFIX",
+		device: "a Wine prefix",
+		long: `devices-cli uses the worktree's prefix for the DLLs, or creates one in its state
+directory and boots Wine in it. Each --dll names a 64-bit DLL, or a directory
+of them, that devices-cli copies into the prefix's system32 directory and has
+Wine load instead of its own, such as vkd3d-proton's d3d12.dll; a prefix only
+serves requests for the same DLLs. The prefix is deleted when it is released,
+idle too long, or its worktree is gone. wine and wineserver must be on PATH.`,
+		example: `  WINEPREFIX="$(devices-cli get wine)" wine ./app.exe
+  devices-cli get wine --dll ~/vkd3d-proton/x64`,
+		bind: func(cmd *cobra.Command) {
+			cmd.Flags().StringArrayVar(&dlls, "dll", nil, "DLL, or directory of DLLs, to load instead of Wine's own (repeatable)")
+		},
+		request: func(_ context.Context, flags *getFlags) (devices.Request, error) {
+			req, err := wine.NewRequest(dlls)
+			if err != nil {
+				return nil, err
+			}
+			stateDir, err := config.StateDir()
+			if err != nil {
+				return nil, err
+			}
+			req.Root = filepath.Join(stateDir, "wine")
 			req.BootTimeout = flags.bootTimeout
 			return req, nil
 		},
