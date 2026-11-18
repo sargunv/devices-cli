@@ -106,6 +106,9 @@ func TestVMLifecycle(t *testing.T) {
 		t.Error("VM is alive after Stop")
 	}
 	calls, _ := os.ReadFile(filepath.Join(bin, "ssh-calls"))
+	if !strings.Contains(string(calls), inst.ID+" "+raiseSSHLimits+"\n") {
+		t.Errorf("ssh calls:\n%s\nwant the sshd limits raised", calls)
+	}
 	if !strings.Contains(string(calls), inst.ID+" shutdown -p now") {
 		t.Errorf("ssh calls:\n%s\nwant a shutdown", calls)
 	}
