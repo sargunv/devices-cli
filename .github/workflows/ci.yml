@@ -67,7 +67,7 @@ jobs:
       - name: Install QEMU, UEFI firmware, and anyvm
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ovmf qemu-system-x86 qemu-utils
+          sudo apt-get install --yes --no-install-recommends ovmf qemu-system-x86
           curl -fsSL -o "$RUNNER_TEMP/anyvm.py" https://github.com/anyvm-org/anyvm/releases/download/v0.7.5/anyvm.py
           echo "c192b299b9bf1b9f07b1d5e5b3977b518f8f24a9af9c20da259cdca22271d9f5  $RUNNER_TEMP/anyvm.py" | sha256sum --check
           echo "ANYVM=$RUNNER_TEMP/anyvm.py" >> "$GITHUB_ENV"
