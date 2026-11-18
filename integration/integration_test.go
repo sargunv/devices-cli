@@ -27,6 +27,8 @@ type env struct {
 	t    *testing.T
 	bin  string
 	vars []string
+	// xdgState is the XDG_STATE_HOME that devices-cli runs with.
+	xdgState string
 }
 
 func setup(t *testing.T, config string) *env {
@@ -44,8 +46,9 @@ func setup(t *testing.T, config string) *env {
 		t.Fatal(err)
 	}
 	e := &env{
-		t:   t,
-		bin: bin,
+		t:        t,
+		bin:      bin,
+		xdgState: filepath.Join(dir, "state"),
 		vars: append(os.Environ(),
 			"XDG_STATE_HOME="+filepath.Join(dir, "state"),
 			"XDG_CONFIG_HOME="+configHome,
@@ -59,6 +62,9 @@ func setup(t *testing.T, config string) *env {
 	})
 	return e
 }
+
+// stateDir is devices-cli's state directory.
+func (e *env) stateDir() string { return filepath.Join(e.xdgState, "devices-cli") }
 
 // owner returns a new git worktree.
 func (e *env) owner() string {
@@ -308,6 +314,58 @@ func TestOHOSEmulators(t *testing.T) {
 	}
 	if !after.ModTime().Equal(before.ModTime()) {
 		t.Error("an instance wrote the shared userdata image")
+	}
+}
+
+func TestHarmonyOSEmulators(t *testing.T) {
+	emulator := os.Getenv("HARMONYOS_EMULATOR")
+	if emulator == "" {
+		emulator = "/Applications/DevEco-Studio.app/Contents/tools/emulator/Emulator"
+	}
+	if _, err := os.Stat(emulator); err != nil {
+		t.Skip("HarmonyOS emulators need DevEco Studio's Emulator")
+	}
+	hdcPath := "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc"
+	hdc := func(key string, args ...string) string {
+		return output(hdcPath, append([]string{"-t", key}, args...)...)
+	}
+	e := setup(t, "max_instances = 2\n")
+	a, b := e.owner(), e.owner()
+
+	keyA, keyB := e.getConcurrently(a, b, "harmonyos")
+
+	// Each owner's instance has its own data.
+	hdc(keyA, "shell", "echo owner-a > /data/local/tmp/marker")
+	if got := hdc(keyA, "shell", "cat /data/local/tmp/marker"); got != "owner-a" {
+		t.Errorf("a reads %q from its own marker", got)
+	}
+	if got := hdc(keyB, "shell", "cat /data/local/tmp/marker"); strings.Contains(got, "owner-a") {
+		t.Error("b sees a's marker")
+	}
+
+	if id := e.get(a, "harmonyos"); id != keyA {
+		t.Errorf("a got %s, then %s", keyA, id)
+	}
+	e.checkExec(a, true, true, shellProgram("/system/bin/sh"), "harmonyos")
+
+	// Removing b's owner stops and deletes its instance at the next command;
+	// release does a's.
+	if err := os.RemoveAll(b); err != nil {
+		t.Fatal(err)
+	}
+	if l := e.ls(); len(l.Instances) != 1 || l.Instances[0].ID != keyA {
+		t.Errorf("after removing b: %+v; want only a's instance", l.Instances)
+	}
+	pid := e.ls().Instances[0].PID
+	if _, _, err := e.run(a, "release"); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("kill", "-0", strconv.Itoa(pid)).Run(); err == nil {
+		t.Errorf("a's emulator process %d still runs", pid)
+	}
+	instances, _ := filepath.Glob(filepath.Join(e.stateDir(), "harmonyos", "devices_cli_*"))
+	if len(instances) != 0 {
+		t.Errorf("instances left behind: %v", instances)
 	}
 }
 

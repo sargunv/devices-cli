@@ -17,6 +17,7 @@ import (
 	"github.com/sargunv/devices-cli/internal/config"
 	"github.com/sargunv/devices-cli/internal/devices"
 	"github.com/sargunv/devices-cli/internal/freebsd"
+	"github.com/sargunv/devices-cli/internal/harmonyos"
 	"github.com/sargunv/devices-cli/internal/ohos"
 	"github.com/sargunv/devices-cli/internal/state"
 )
@@ -48,7 +49,7 @@ func (a *app) root() *cobra.Command {
 		Use:   "devices-cli",
 		Short: "Give each worktree its own ephemeral test device",
 		Long: `devices-cli gives each git worktree its own test device (an Android
-emulator, an Apple simulator, an OpenHarmony emulator, or a FreeBSD virtual
+emulator, an Apple simulator, an OpenHarmony or HarmonyOS emulator, or a FreeBSD virtual
 machine), starts it on demand, and stops it when the worktree goes away.
 
 A project asks for a device and gets its ID on stdout:
@@ -97,6 +98,9 @@ func (a *app) manager() (*devices.Manager, error) {
 	}
 	kinds[ohos.KindName] = ohos.Kind{}
 	kinds[freebsd.KindName] = freebsd.Kind{VMDir: filepath.Join(stateDir, "vms")}
+	// Collection runs without DevEco Studio too, and then signals the process.
+	emulator, _ := harmonyos.FindEmulator()
+	kinds[harmonyos.KindName] = harmonyos.Kind{Root: filepath.Join(stateDir, "harmonyos"), Emulator: emulator}
 	return &devices.Manager{
 		Store:      state.Store{Dir: stateDir},
 		Config:     cfg,

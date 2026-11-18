@@ -1,10 +1,10 @@
 # devices-cli
 
 Gives each git worktree its own ephemeral test device: an Android emulator, an
-Apple simulator, an OpenHarmony emulator, or a FreeBSD virtual machine. A
-project asks for a device and gets its ID; devices-cli starts the device on
-demand, keeps it apart from every other worktree's, caps how many run at once,
-and stops it when the worktree goes away.
+Apple simulator, an OpenHarmony or HarmonyOS emulator, or a FreeBSD virtual
+machine. A project asks for a device and gets its ID; devices-cli starts the
+device on demand, keeps it apart from every other worktree's, caps how many run
+at once, and stops it when the worktree goes away.
 
 It is for machines that run many coding agents or checkouts side by side.
 Sharing one emulator between worktrees breaks suites that install an app, and
@@ -148,6 +148,30 @@ port to a host port from 56000 up. QEMU uses KVM on an x86_64 Linux host that
 has it and emulates the machine elsewhere; on an Apple silicon laptop an
 instance is ready in about a minute.
 
+### HarmonyOS emulators
+
+```sh
+devices-cli get harmonyos [--device-type <type>] [--os-version <version>]
+```
+
+prints the hdc connect key, such as `127.0.0.1:15600`, of the worktree's
+HarmonyOS emulator once the system has finished booting. It runs the arm64
+system images that DevEco Studio downloads, so on an Apple silicon Mac it boots
+in about 30 seconds.
+
+- `--device-type` is the image's device type: `phone` (the default), `tablet`,
+  `foldable`, and so on.
+- `--os-version` picks the newest downloaded image whose version contains it,
+  such as `6.0.2`, and defaults to the newest downloaded.
+
+Each worktree's emulator is an instance of its own, which devices-cli creates
+with DevEco Studio's `Emulator` command line in its state directory, starts on
+an hdc port from 15600 up, and deletes, with its data (about 1.2 GB once
+booted), when it is released or collected. The emulator opens a window.
+`Emulator` comes from DevEco Studio on macOS, or from `HARMONYOS_EMULATOR`; hdc
+from DevEco Studio, whose version matches its emulator, else from `PATH`.
+Download images in DevEco Studio's Device Manager.
+
 ### FreeBSD virtual machines
 
 ```sh
@@ -206,13 +230,14 @@ Copies are named for their contents, so an unchanged program or directory is
 copied once, however many times it runs, and concurrent runs never see a partial
 copy. Symbolic links are copied as what they point to; version control
 directories and directories with a `CACHEDIR.TAG`, such as Cargo's `target`, are
-left out. Android and OpenHarmony devices keep the copies in
+left out. Android, OpenHarmony and HarmonyOS devices keep the copies in
 `/data/local/tmp/devices-cli`. Apple simulators and FreeBSD VMs see the host's
 paths, so nothing is copied; a FreeBSD VM's program and synced directories must
 lie in the worktree, which the VM mounts. A simulator starts the program in its
-own data directory, not the working directory. On OpenHarmony, the program's
-stdout arrives a line behind, and its stderr after it exits, so `exec` suits
-programs that run to completion, such as tests, rather than interactive ones.
+own data directory, not the working directory. On OpenHarmony and HarmonyOS, the
+program's stdout arrives a line behind, and its stderr after it exits, so `exec`
+suits programs that run to completion, such as tests, rather than interactive
+ones.
 
 `exec` works as Cargo's
 [target runner](https://doc.rust-lang.org/cargo/reference/config.html#targettriplerunner),

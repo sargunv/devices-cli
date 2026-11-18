@@ -17,6 +17,8 @@ is the user contract; `--help` text must agree with it.
 - `internal/apple/`: per-owner simulators through simctl.
 - `internal/ohos/`: per-owner QEMU instances of the Oniro image, reached through
   hdc.
+- `internal/harmonyos/`: per-owner instances of DevEco Studio's HarmonyOS
+  emulator, created and started with its `Emulator` command line.
 - `internal/freebsd/`: per-owner FreeBSD VMs through anyvm.
 - `internal/process/`: helpers for the device processes kinds launch.
 - `internal/remote/`: what `exec` runs on a device: path mapping, the copies of

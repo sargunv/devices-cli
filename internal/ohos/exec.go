@@ -93,7 +93,7 @@ func (h hdcShell) recvStderr(ctx context.Context, remoteFile string, w io.Writer
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	local := filepath.Join(dir, "stderr")
-	if _, err := hdc(ctx, h.path, "-t", h.key, "file", "recv", remoteFile, local); err != nil {
+	if _, err := HDC(ctx, h.path, "-t", h.key, "file", "recv", remoteFile, local); err != nil {
 		return err
 	}
 	if _, err := h.Run(ctx, nil, "rm -f "+remote.ShellQuote(remoteFile)); err != nil {
@@ -115,7 +115,7 @@ type hdcShell struct {
 func (h hdcShell) Name() string { return h.key }
 
 func (h hdcShell) send(ctx context.Context, host, dest string) error {
-	out, err := hdc(ctx, h.path, "-t", h.key, "file", "send", host, dest)
+	out, err := HDC(ctx, h.path, "-t", h.key, "file", "send", host, dest)
 	if err != nil {
 		return fmt.Errorf("hdc file send %s: %w", host, err)
 	}
