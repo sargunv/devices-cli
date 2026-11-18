@@ -212,7 +212,7 @@ func ohosKind() kindCommand {
 image in $OHOS_EMULATOR_IMAGES and waits until an application can install and
 launch in it: the system has booted, user 100 is active, and the screen is
 unlocked. The emulator runs with -snapshot, so instances share the image and
-never change it. qemu-system-x86_64 and hdc must be on PATH. QEMU uses KVM on
+never change it. qemu-system-x86_64, qemu-img and hdc must be on PATH. QEMU uses KVM on
 an x86_64 Linux host that has it and emulates the machine elsewhere.`,
 		example: `  hdc -t "$(devices-cli get ohos)" shell uname -a`,
 		bind:    func(*cobra.Command) {},

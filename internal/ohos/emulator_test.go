@@ -1,6 +1,7 @@
 package ohos
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,10 +11,17 @@ import (
 	"github.com/sargunv/devices-cli/internal/process"
 )
 
-// The fake QEMU runs until it is stopped.
+// The fake QEMU records its arguments and runs until it is stopped.
 const fakeQEMU = `#!/bin/sh
+echo "$@" > "$(dirname "$0")/qemu-args"
 trap 'exit 0' TERM
 while :; do sleep 0.1; done
+`
+
+// The fake qemu-img records its arguments and creates the image.
+const fakeQEMUImg = `#!/bin/sh
+echo "$@" > "$(dirname "$0")/qemu-img-args"
+for file; do case "$file" in *.qcow2) touch "$file" ;; esac; done
 `
 
 // The fake hdc boots in stages as the Oniro image does: the shell answers
@@ -22,7 +30,8 @@ while :; do sleep 0.1; done
 // Every call goes to a log beside it.
 const fakeHDC = `#!/bin/sh
 dir=$(dirname "$0")
-echo "$@" >> "$dir/hdc-calls"
+# printf, not echo, which dash's echo would expand the script's \n in.
+printf '%s\n' "$*" >> "$dir/hdc-calls"
 count() { n=$(cat "$dir/$1" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "$dir/$1"; echo $n; }
 case "$*" in
   "tconn "*) echo "Connect OK" ;;
@@ -40,6 +49,10 @@ case "$*" in
     if [ -e "$dir/swiped" ]; then locked=false; else locked=true; fi
     printf ' * screenState  \t\tfalse\t\tscreen on / off status\n * screenLocked  \t\t%s\t\t100\n' "$locked" ;;
   *"shell uinput -T -m "*) touch "$dir/swiped" ;;
+  *"shell resize2fs /dev/block/vdd 2>&1; printf"*)
+    # hdc exits 0 whatever the command does; the first resize fails.
+    if [ "$(count resize)" -lt 2 ]; then status=1; else status=0; fi
+    printf 'resize2fs 1.47.0\n\n__devices_cli_status=%d\n' "$status" ;;
   *) echo "unexpected hdc call: $*" >&2; exit 1 ;;
 esac
 `
@@ -47,7 +60,7 @@ esac
 func setupFakes(t *testing.T) (*Request, string) {
 	t.Helper()
 	bin := t.TempDir()
-	for name, content := range map[string]string{"hdc": fakeHDC, "qemu-system-x86_64": fakeQEMU} {
+	for name, content := range map[string]string{"hdc": fakeHDC, "qemu-system-x86_64": fakeQEMU, "qemu-img": fakeQEMUImg} {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(content), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -57,7 +70,7 @@ func setupFakes(t *testing.T) (*Request, string) {
 	pollInterval = 10 * time.Millisecond
 	t.Cleanup(func() { pollInterval = interval })
 	req := &Request{
-		Images: t.TempDir(), QEMU: filepath.Join(bin, "qemu-system-x86_64"), HDC: filepath.Join(bin, "hdc"),
+		Images: t.TempDir(), QEMU: filepath.Join(bin, "qemu-system-x86_64"), QEMUImg: filepath.Join(bin, "qemu-img"), HDC: filepath.Join(bin, "hdc"),
 		LogDir: t.TempDir(), BootTimeout: 10 * time.Second,
 	}
 	return req, bin
@@ -82,9 +95,44 @@ func TestWaitReadyWaitsUntilAnAppCanLaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
-	// The last check confirms the swipe unlocked the screen.
-	if last := lines[len(lines)-1]; !strings.HasSuffix(last, "shell hidumper -s ScreenlockService -a -all") {
-		t.Errorf("last hdc call is %q, want a screen lock check", last)
+	// The last check confirms the swipe unlocked the screen, and then the
+	// data partition's file system grows.
+	if last := lines[len(lines)-2]; !strings.HasSuffix(last, "shell hidumper -s ScreenlockService -a -all") {
+		t.Errorf("second-to-last hdc call is %q, want a screen lock check", last)
+	}
+	// The first resize fails, so the readiness checks run again before the
+	// second.
+	resizes := 0
+	for _, line := range lines {
+		if strings.Contains(line, "shell resize2fs /dev/block/vdd") {
+			resizes++
+		}
+	}
+	if last := lines[len(lines)-1]; !strings.Contains(last, "shell resize2fs /dev/block/vdd") || resizes != 2 {
+		t.Errorf("hdc calls:\n%s\nwant two resizes, the last call", calls)
+	}
+	// The data partition boots from a larger overlay of the image's, which
+	// Stop removes.
+	data := dataPath(inst.Log)
+	img, err := os.ReadFile(filepath.Join(bin, "qemu-img-args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "create -q -f qcow2 -F raw -b " + filepath.Join(req.Images, "userdata.img") + " " + data + " " + dataSize + "\n"; string(img) != want {
+		t.Errorf("qemu-img %q, want %q", img, want)
+	}
+	qemuArgs, err := os.ReadFile(filepath.Join(bin, "qemu-args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "file=" + data + ",format=qcow2,id=userdata,"; !strings.Contains(string(qemuArgs), want) {
+		t.Errorf("QEMU args %s lack %q", qemuArgs, want)
+	}
+	if err := (Kind{}).Stop(t.Context(), inst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(data); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Stop left %s: %v", data, err)
 	}
 	swipe := "-t " + inst.ID + " shell uinput -T -m 180 648 180 72 300"
 	if !strings.Contains(string(calls), swipe+"\n") {

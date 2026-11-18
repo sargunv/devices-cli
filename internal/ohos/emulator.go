@@ -36,6 +36,10 @@ const (
 	screenHeight = 720
 )
 
+// dataSize is the size of an instance's data partition, which the image ships
+// at about 1.3 GB, too little for the programs exec copies there.
+const dataSize = "16G"
+
 // pollInterval separates readiness checks while an instance boots.
 var pollInterval = 2 * time.Second
 
@@ -46,6 +50,7 @@ type Request struct {
 	// Images is the directory that holds the Oniro image files.
 	Images      string
 	QEMU        string
+	QEMUImg     string
 	HDC         string
 	LogDir      string
 	BootTimeout time.Duration
@@ -58,6 +63,10 @@ func NewRequest() (*Request, error) {
 		return nil, errors.New("no OpenHarmony emulator image: set OHOS_EMULATOR_IMAGES to the directory with the Oniro image's bzImage and .img files")
 	}
 	resolved, err := filepath.EvalSymlinks(dir)
+	if err == nil {
+		// QEMU finds a relative backing image from the overlay's directory.
+		resolved, err = filepath.Abs(resolved)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("OHOS_EMULATOR_IMAGES: %w", err)
 	}
@@ -70,11 +79,15 @@ func NewRequest() (*Request, error) {
 	if err != nil {
 		return nil, errors.New("qemu-system-x86_64 is not on PATH; install QEMU with your system package manager")
 	}
+	qemuImg, err := exec.LookPath("qemu-img")
+	if err != nil {
+		return nil, errors.New("qemu-img is not on PATH; it comes with QEMU")
+	}
 	hdc, err := exec.LookPath("hdc")
 	if err != nil {
 		return nil, errors.New("hdc is not on PATH; it comes in the OpenHarmony SDK's toolchains directory")
 	}
-	return &Request{Images: resolved, QEMU: qemu, HDC: hdc}, nil
+	return &Request{Images: resolved, QEMU: qemu, QEMUImg: qemuImg, HDC: hdc}, nil
 }
 
 func fileExists(path string) bool {
@@ -122,7 +135,16 @@ func (r *Request) Start(_ context.Context, owner string, running []state.Instanc
 	}
 	defer logFile.Close()
 
-	cmd := exec.Command(r.QEMU, r.args(port)...)
+	// The data partition boots from an overlay of the image's, larger and
+	// empty until written, which WaitReady grows the file system into.
+	data := dataPath(logPath)
+	out, err := exec.Command(r.QEMUImg, "create", "-q", "-f", "qcow2", "-F", "raw",
+		"-b", filepath.Join(r.Images, "userdata.img"), data, dataSize).CombinedOutput()
+	if err != nil {
+		return state.Instance{}, fmt.Errorf("create the data partition %s: %w: %s", data, err, out)
+	}
+
+	cmd := exec.Command(r.QEMU, r.args(port, data)...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	// Its own session keeps QEMU running after devices-cli exits and out of
@@ -150,10 +172,14 @@ func (r *Request) Start(_ context.Context, owner string, running []state.Instanc
 
 func connectKey(port int) string { return "127.0.0.1:" + strconv.Itoa(port) }
 
+// dataPath is the overlay of an instance's data partition, beside its log.
+func dataPath(log string) string { return strings.TrimSuffix(log, ".log") + "-userdata.qcow2" }
+
 // args are the QEMU flags for the Oniro image, as its run.sh boots it but
-// headless. -snapshot keeps the guest's writes in temporary files, so
-// instances share the image and never change it.
-func (r *Request) args(port int) []string {
+// headless, with the data partition from the overlay at data. -snapshot keeps
+// the guest's writes in temporary files, so instances share the image and
+// never change it.
+func (r *Request) args(port int, data string) []string {
 	args := []string{
 		"-snapshot",
 		"-machine", "q35",
@@ -170,8 +196,12 @@ func (r *Request) args(port int) []string {
 		"-kernel", filepath.Join(r.Images, "bzImage"),
 	}
 	for i, name := range []string{"updater", "system", "vendor", "userdata"} {
+		file, format := filepath.Join(r.Images, name+".img"), "raw"
+		if name == "userdata" {
+			file, format = data, "qcow2"
+		}
 		args = append(args,
-			"-drive", fmt.Sprintf("if=none,file=%s,format=raw,id=%s,index=%d", filepath.Join(r.Images, name+".img"), name, i),
+			"-drive", fmt.Sprintf("if=none,file=%s,format=%s,id=%s,index=%d", file, format, name, i),
 			"-device", "virtio-blk-pci,drive="+name)
 	}
 	args = append(args,
@@ -210,7 +240,15 @@ func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 		}
 		err := r.ready(ctx, inst.ID)
 		if err == nil {
-			return nil
+			// The file system fills the larger partition, while mounted. A
+			// concurrent get may be growing it too, so a failure is retried.
+			resizeCtx, cancel := context.WithDeadline(ctx, deadline)
+			_, err = (hdcShell{path: r.HDC, key: inst.ID}).Run(resizeCtx, nil, "resize2fs "+dataDevice)
+			cancel()
+			if err == nil {
+				return nil
+			}
+			err = fmt.Errorf("resize2fs %s: %w", dataDevice, err)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("OpenHarmony emulator %s was not ready within %s (last: %w); pass a longer --boot-timeout if the machine is busy%s",
@@ -277,6 +315,9 @@ func (r *Request) ready(ctx context.Context, key string) error {
 	return nil
 }
 
+// dataDevice is the guest's data partition, the fourth drive.
+const dataDevice = "/dev/block/vdd"
+
 // foregroundUser is the OpenHarmony user that hdc installs and launches as.
 const foregroundUser = 100
 
@@ -339,10 +380,18 @@ func (Kind) Stop(ctx context.Context, inst state.Instance) error {
 	if hdcPath, err := exec.LookPath("hdc"); err == nil {
 		_, _ = HDC(ctx, hdcPath, "tconn", inst.ID, "-remove")
 	}
-	if !alive(inst) {
+	if alive(inst) {
+		if err := process.StopGroup(inst.PID, 15*time.Second); err != nil {
+			return err
+		}
+	}
+	if inst.Log == "" {
 		return nil
 	}
-	return process.StopGroup(inst.PID, 15*time.Second)
+	if err := os.Remove(dataPath(inst.Log)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // RemoveDefinition implements devices.Kind. OpenHarmony emulators have no
