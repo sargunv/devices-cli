@@ -19,6 +19,9 @@ is the user contract; `--help` text must agree with it.
   hdc.
 - `internal/freebsd/`: per-owner FreeBSD VMs through anyvm.
 - `internal/process/`: helpers for the device processes kinds launch.
+- `internal/remote/`: what `exec` runs on a device: path mapping, the copies of
+  the program and synced directories, and shell quoting. Each kind's `exec.go`
+  runs it there.
 - `integration/`: boots real devices through the built binary (build tag
   `integration`).
 

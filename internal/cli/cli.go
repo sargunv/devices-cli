@@ -23,21 +23,27 @@ import (
 
 // Execute runs the command line and returns the process exit code.
 func Execute(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	root := newRoot(stdout, stderr)
+	a := &app{stdin: os.Stdin, stdout: stdout, stderr: stderr}
+	root := a.root()
 	root.SetArgs(args)
 	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintf(stderr, "devices-cli: %v\n", err)
 		return 1
 	}
-	return 0
+	return a.exitCode
 }
 
 type app struct {
+	stdin          io.Reader
 	stdout, stderr io.Writer
+	// exitCode is the process's exit status after a command that succeeds:
+	// for exec, the program's.
+	exitCode int
+	// emulatorArgs are the flags after -- of "get android".
+	emulatorArgs []string
 }
 
-func newRoot(stdout, stderr io.Writer) *cobra.Command {
-	a := &app{stdout: stdout, stderr: stderr}
+func (a *app) root() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "devices-cli",
 		Short: "Give each worktree its own ephemeral test device",
@@ -58,9 +64,9 @@ $XDG_STATE_HOME/devices-cli. See https://github.com/sargunv/devices-cli.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.SetOut(stdout)
-	root.SetErr(stderr)
-	root.AddCommand(a.getCommand(), a.assignCommand(), a.releaseCommand(), a.lsCommand(), a.gcCommand())
+	root.SetOut(a.stdout)
+	root.SetErr(a.stderr)
+	root.AddCommand(a.getCommand(), a.execCommand(), a.assignCommand(), a.releaseCommand(), a.lsCommand(), a.gcCommand())
 	return root
 }
 

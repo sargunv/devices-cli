@@ -1,9 +1,10 @@
 package cli
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -23,6 +24,36 @@ type getFlags struct {
 	bootTimeout time.Duration
 }
 
+func (flags *getFlags) bind(cmd *cobra.Command) {
+	cmd.PersistentFlags().StringVar(&flags.owner, "owner", "", "directory that owns the device (default: the git worktree of the working directory)")
+	cmd.PersistentFlags().DurationVar(&flags.wait, "wait", 10*time.Minute, "how long to wait for a free slot; 0 fails at once")
+	cmd.PersistentFlags().DurationVar(&flags.bootTimeout, "boot-timeout", 10*time.Minute, "how long to wait for a new instance to boot")
+}
+
+// kindCommand is one kind's subcommand of get or exec: its flags, and the
+// request they make.
+type kindCommand struct {
+	name    string // the subcommand's name, which is the kind's
+	usage   string // the flags in the usage line, after the name
+	id      string // what get prints, such as "adb serial"
+	device  string // the device, such as "an Android emulator"
+	long    string // how get finds or starts the device
+	example string // get's examples
+	// bind adds the kind's flags; request makes the request from them.
+	bind    func(cmd *cobra.Command)
+	request func(ctx context.Context, flags *getFlags) (devices.Request, error)
+}
+
+// kindCommands lists the kinds, in the order the help shows them. Each call
+// returns fresh flag storage.
+func (a *app) kindCommands() []kindCommand {
+	kinds := []kindCommand{a.androidKind()}
+	for _, platform := range apple.Platforms {
+		kinds = append(kinds, appleKind(platform))
+	}
+	return append(kinds, ohosKind(), freebsdKind())
+}
+
 func (a *app) getCommand() *cobra.Command {
 	var flags getFlags
 	cmd := &cobra.Command{
@@ -34,101 +65,73 @@ get reuses the worktree's running instance that matches the request, or starts
 a new one and waits until it has booted. Progress goes to stderr. When every
 slot is in use, get waits up to --wait for one to free up.`,
 	}
-	cmd.PersistentFlags().StringVar(&flags.owner, "owner", "", "directory that owns the device (default: the git worktree of the working directory)")
-	cmd.PersistentFlags().DurationVar(&flags.wait, "wait", 10*time.Minute, "how long to wait for a free slot; 0 fails at once")
-	cmd.PersistentFlags().DurationVar(&flags.bootTimeout, "boot-timeout", 10*time.Minute, "how long to wait for a new instance to boot")
-	cmd.AddCommand(a.getAndroidCommand(&flags))
-	for _, platform := range apple.Platforms {
-		cmd.AddCommand(a.getAppleCommand(&flags, platform))
+	flags.bind(cmd)
+	for _, kind := range a.kindCommands() {
+		sub := &cobra.Command{
+			Use:     kind.name + kind.usage,
+			Short:   "Print the " + kind.id + " of " + kind.device,
+			Long:    "Print the " + kind.id + " of " + kind.device + " for this worktree.\n\n" + kind.long,
+			Example: kind.example,
+			Args:    cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				req, err := kind.request(cmd.Context(), &flags)
+				if err != nil {
+					return err
+				}
+				_, id, err := a.device(cmd, &flags, req)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(a.stdout, id)
+				return nil
+			},
+		}
+		kind.bind(sub)
+		if kind.name == android.KindName {
+			a.allowEmulatorArgs(sub)
+		}
+		cmd.AddCommand(sub)
 	}
-	cmd.AddCommand(a.getOHOSCommand(&flags))
-	cmd.AddCommand(a.getFreeBSDCommand(&flags))
 	return cmd
 }
 
-func (a *app) getFreeBSDCommand(flags *getFlags) *cobra.Command {
-	var release string
-	cmd := &cobra.Command{
-		Use:   "freebsd --release <version>",
-		Short: "Print the SSH host of a FreeBSD virtual machine",
-		Long: `Print the SSH host of a FreeBSD virtual machine for this worktree.
-
-get returns the worktree's VM, or boots one with anyvm and waits until it
-answers SSH. The worktree is mounted in the VM over NFS at its own path, so
-files keep their paths, and "ssh <host> <command>" runs a command there. The
-VM boots anyvm's cached image with --snapshot, so VMs share the image and a
-VM's changes go away with it. Release and collection shut the VM down with
-"shutdown -p now".
-
-anyvm comes from ANYVM, the path of anyvm.py, or from PATH. It needs QEMU and
-UEFI firmware, and devices-cli runs FreeBSD VMs only on a Linux host with KVM.`,
-		Example: `  ssh "$(devices-cli get freebsd --release 14.4)" uname -a`,
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			req, err := freebsd.NewRequest(release)
-			if err != nil {
-				return err
-			}
-			stateDir, err := config.StateDir()
-			if err != nil {
-				return err
-			}
-			cacheDir, err := config.CacheDir()
-			if err != nil {
-				return err
-			}
-			req.VMDir = filepath.Join(stateDir, "vms")
-			req.CacheDir = filepath.Join(cacheDir, "anyvm")
-			if req.LogDir, err = logDir(); err != nil {
-				return err
-			}
-			req.BootTimeout = flags.bootTimeout
-			return a.get(cmd, flags, req)
-		},
+// device resolves the owner and returns it with the ID of its device for the
+// request, starting one if needed.
+func (a *app) device(cmd *cobra.Command, flags *getFlags, req devices.Request) (string, string, error) {
+	ownerPath, err := owner.Resolve(flags.owner)
+	if err != nil {
+		return "", "", err
 	}
-	cmd.Flags().StringVar(&release, "release", "", "FreeBSD release, such as 14.4 (required)")
-	_ = cmd.MarkFlagRequired("release")
-	return cmd
+	m, err := a.manager()
+	if err != nil {
+		return "", "", err
+	}
+	id, err := m.Get(cmd.Context(), ownerPath, req, flags.wait)
+	return ownerPath, id, err
 }
 
-func (a *app) getOHOSCommand(flags *getFlags) *cobra.Command {
-	return &cobra.Command{
-		Use:   "ohos",
-		Short: "Print the hdc connect key of an OpenHarmony emulator",
-		Long: `Print the hdc connect key of an OpenHarmony emulator for this worktree.
-
-get returns the worktree's emulator, or starts QEMU on the Oniro emulator image
-in $OHOS_EMULATOR_IMAGES and waits until an application can install and
-launch in it: the system has booted, user 100 is active, and the screen is
-unlocked. The emulator runs with -snapshot, so instances share the image and
-never change it. qemu-system-x86_64 and hdc must be on PATH. QEMU uses KVM on
-an x86_64 Linux host that has it and emulates the machine elsewhere.`,
-		Example: `  hdc -t "$(devices-cli get ohos)" shell uname -a`,
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			req, err := ohos.NewRequest()
-			if err != nil {
-				return err
-			}
-			req.BootTimeout = flags.bootTimeout
-			if req.LogDir, err = logDir(); err != nil {
-				return err
-			}
-			return a.get(cmd, flags, req)
-		},
+// The emulator flags of "get android", which go after --.
+func (a *app) allowEmulatorArgs(cmd *cobra.Command) {
+	cmd.Use = "android --api <level> [flags] [-- <emulator flags>]"
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if dash := cmd.ArgsLenAtDash(); dash != 0 && len(args) > 0 {
+			return fmt.Errorf("unexpected argument %q; pass emulator flags after --", args[0])
+		}
+		a.emulatorArgs = args
+		return nil
 	}
 }
 
-func (a *app) getAndroidCommand(flags *getFlags) *cobra.Command {
+func (a *app) androidKind() kindCommand {
 	req := &android.Request{Log: a.stderr}
-	cmd := &cobra.Command{
-		Use:   "android --api <level> [flags] [-- <emulator flags>]",
-		Short: "Print the adb serial of an Android emulator or assigned device",
-		Long: `Print the adb serial of an Android device for this worktree.
-
-A physical device assigned to the worktree with "devices-cli assign" comes
-first when it is connected and runs the API level and ABI. Otherwise get
-returns the worktree's emulator for the system image, starting one that runs
+	return kindCommand{
+		name:   android.KindName,
+		usage:  " --api <level> [flags]",
+		id:     "adb serial",
+		device: "an Android emulator or assigned device",
+		long: `A physical device assigned to the worktree with "devices-cli assign" comes
+first when it is connected and runs the API level and ABI. Otherwise devices-cli
+uses the worktree's emulator for the system image, starting one that runs
 until it is released, idle too long, or its worktree is gone.
 
 Emulators run headless by default; --headful opens a window.
@@ -138,80 +141,143 @@ missing. Flags after -- go to the emulator, and an instance only matches a
 request with the same flags. devices-cli sets -avd, -port, -read-only,
 -no-window (unless --headful), -no-audio, -no-boot-anim, -no-snapshot,
 -no-metrics, and -crash-report-mode disabled.`,
-		Example: `  devices-cli get android --api 36
+		example: `  devices-cli get android --api 36
   devices-cli get android --api 34 --variant google_apis --abi x86_64
   devices-cli get android --api 36 -- -gpu swiftshader -memory 4096`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if dash := cmd.ArgsLenAtDash(); dash != 0 && len(args) > 0 {
-				return errors.New("unexpected argument; pass emulator flags after --")
-			}
-			req.Args = args
+		bind: func(cmd *cobra.Command) {
+			cmd.Flags().StringVar(&req.API, "api", "", "API level of the system image, such as 36 (required)")
+			cmd.Flags().StringVar(&req.ABI, "abi", android.HostABI(), "ABI of the system image")
+			cmd.Flags().StringVar(&req.Variant, "variant", "default", "system image variant, such as default, google_apis, or google_apis_playstore")
+			cmd.Flags().BoolVar(&req.Headful, "headful", false, "open an emulator window (default: headless)")
+			cmd.Flags().StringVar(&req.DeviceProfile, "device-profile", "", "avdmanager hardware profile ID, such as wearos_small_round or tv_1080p")
+			_ = cmd.MarkFlagRequired("api")
+		},
+		request: func(_ context.Context, flags *getFlags) (devices.Request, error) {
+			req.Args = a.emulatorArgs
 			if err := req.Validate(); err != nil {
-				return err
+				return nil, err
 			}
 			sdk, err := android.FindSDK()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			req.SDK = sdk
 			req.BootTimeout = flags.bootTimeout
 			if req.LogDir, err = logDir(); err != nil {
-				return err
+				return nil, err
 			}
-			return a.get(cmd, flags, req)
+			return req, nil
 		},
 	}
-	cmd.Flags().StringVar(&req.API, "api", "", "API level of the system image, such as 36 (required)")
-	cmd.Flags().StringVar(&req.ABI, "abi", android.HostABI(), "ABI of the system image")
-	cmd.Flags().StringVar(&req.Variant, "variant", "default", "system image variant, such as default, google_apis, or google_apis_playstore")
-	cmd.Flags().BoolVar(&req.Headful, "headful", false, "open an emulator window (default: headless)")
-	cmd.Flags().StringVar(&req.DeviceProfile, "device-profile", "", "avdmanager hardware profile ID, such as wearos_small_round or tv_1080p")
-	_ = cmd.MarkFlagRequired("api")
-	return cmd
 }
 
-func (a *app) getAppleCommand(flags *getFlags, platform apple.Platform) *cobra.Command {
+func appleKind(platform apple.Platform) kindCommand {
 	var runtime, deviceType string
-	cmd := &cobra.Command{
-		Use:   platform.Kind + " [flags]",
-		Short: "Print the UDID of the worktree's " + platform.Name + " simulator",
-		Long: fmt.Sprintf(`Print the UDID of a %[1]s simulator for this worktree.
-
-get returns the worktree's simulator for the runtime and device type, or
-creates and boots a new one, named "devices-cli <worktree name>". The
+	return kindCommand{
+		name:   platform.Kind,
+		usage:  " [flags]",
+		id:     "UDID",
+		device: article(platform.Name) + " " + platform.Name + " simulator",
+		long: fmt.Sprintf(`devices-cli uses the worktree's simulator for the runtime and device type,
+or creates and boots a new one, named "devices-cli <worktree name>". The
 simulator is deleted when it is released, idle too long, or its worktree is
 gone. Runtimes come with Xcode; install more with
 "xcodebuild -downloadPlatform %[1]s".`, platform.Name),
-		Example: fmt.Sprintf(`  devices-cli get %[1]s
+		example: fmt.Sprintf(`  devices-cli get %[1]s
   devices-cli get %[1]s --runtime 26.4`, platform.Kind),
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			req, err := apple.NewRequest(cmd.Context(), platform, runtime, deviceType)
+		bind: func(cmd *cobra.Command) {
+			cmd.Flags().StringVar(&runtime, "runtime", "", platform.Name+" runtime version, such as 26 or 26.4 (default: the newest installed)")
+			cmd.Flags().StringVar(&deviceType, "device-type", "", "device type name or identifier (default: the runtime's first "+platform.Family+")")
+		},
+		request: func(ctx context.Context, flags *getFlags) (devices.Request, error) {
+			req, err := apple.NewRequest(ctx, platform, runtime, deviceType)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			req.BootTimeout = flags.bootTimeout
-			return a.get(cmd, flags, req)
+			return req, nil
 		},
 	}
-	cmd.Flags().StringVar(&runtime, "runtime", "", platform.Name+" runtime version, such as 26 or 26.4 (default: the newest installed)")
-	cmd.Flags().StringVar(&deviceType, "device-type", "", "device type name or identifier (default: the runtime's first "+platform.Family+")")
-	return cmd
 }
 
-func (a *app) get(cmd *cobra.Command, flags *getFlags, req devices.Request) error {
-	ownerPath, err := owner.Resolve(flags.owner)
-	if err != nil {
-		return err
+func ohosKind() kindCommand {
+	return kindCommand{
+		name:   ohos.KindName,
+		usage:  "",
+		id:     "hdc connect key",
+		device: "an OpenHarmony emulator",
+		long: `devices-cli uses the worktree's emulator, or starts QEMU on the Oniro emulator
+image in $OHOS_EMULATOR_IMAGES and waits until an application can install and
+launch in it: the system has booted, user 100 is active, and the screen is
+unlocked. The emulator runs with -snapshot, so instances share the image and
+never change it. qemu-system-x86_64 and hdc must be on PATH. QEMU uses KVM on
+an x86_64 Linux host that has it and emulates the machine elsewhere.`,
+		example: `  hdc -t "$(devices-cli get ohos)" shell uname -a`,
+		bind:    func(*cobra.Command) {},
+		request: func(_ context.Context, flags *getFlags) (devices.Request, error) {
+			req, err := ohos.NewRequest()
+			if err != nil {
+				return nil, err
+			}
+			req.BootTimeout = flags.bootTimeout
+			if req.LogDir, err = logDir(); err != nil {
+				return nil, err
+			}
+			return req, nil
+		},
 	}
-	m, err := a.manager()
-	if err != nil {
-		return err
+}
+
+func freebsdKind() kindCommand {
+	var release string
+	return kindCommand{
+		name:   freebsd.KindName,
+		usage:  " --release <version>",
+		id:     "SSH host",
+		device: "a FreeBSD virtual machine",
+		long: `devices-cli uses the worktree's VM, or boots one with anyvm and waits until it
+answers SSH. The worktree is mounted in the VM over NFS at its own path, so
+files keep their paths, and "ssh <host> <command>" runs a command there. The
+VM boots anyvm's cached image with --snapshot, so VMs share the image and a
+VM's changes go away with it. Release and collection shut the VM down with
+"shutdown -p now".
+
+anyvm comes from ANYVM, the path of anyvm.py, or from PATH. It needs QEMU and
+UEFI firmware, and devices-cli runs FreeBSD VMs only on a Linux host with KVM.`,
+		example: `  ssh "$(devices-cli get freebsd --release 14.4)" uname -a`,
+		bind: func(cmd *cobra.Command) {
+			cmd.Flags().StringVar(&release, "release", "", "FreeBSD release, such as 14.4 (required)")
+			_ = cmd.MarkFlagRequired("release")
+		},
+		request: func(_ context.Context, flags *getFlags) (devices.Request, error) {
+			req, err := freebsd.NewRequest(release)
+			if err != nil {
+				return nil, err
+			}
+			stateDir, err := config.StateDir()
+			if err != nil {
+				return nil, err
+			}
+			cacheDir, err := config.CacheDir()
+			if err != nil {
+				return nil, err
+			}
+			req.VMDir = filepath.Join(stateDir, "vms")
+			req.CacheDir = filepath.Join(cacheDir, "anyvm")
+			if req.LogDir, err = logDir(); err != nil {
+				return nil, err
+			}
+			req.BootTimeout = flags.bootTimeout
+			return req, nil
+		},
 	}
-	id, err := m.Get(cmd.Context(), ownerPath, req, flags.wait)
-	if err != nil {
-		return err
+}
+
+// article returns the indefinite article for a platform name: "an iOS", "a
+// tvOS".
+func article(name string) string {
+	if strings.ContainsRune("AEIOUaeiou", rune(name[0])) {
+		return "an"
 	}
-	fmt.Fprintln(a.stdout, id)
-	return nil
+	return "a"
 }
