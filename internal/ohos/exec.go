@@ -78,8 +78,10 @@ func Exec(ctx context.Context, hdcPath, key, owner string, spec remote.Spec, loc
 	q := remote.ShellQuote
 	script := "(" + cmd.Script() + ") 2>" + q(errFile) + "; printf '\\n" + statusMarker + "%d\\n' $?"
 	status, err := sh.stream(ctx, nil, spec.Stdout, script)
-	if errOut, catErr := sh.Run(ctx, nil, "cat "+q(errFile)+"; rm -f "+q(errFile)); catErr == nil && errOut != "" {
-		fmt.Fprintln(spec.Stderr, errOut)
+	// The marker follows a newline of its own, which stream drops, so the
+	// file's bytes reach Stderr as they are.
+	if _, catErr := sh.stream(ctx, nil, spec.Stderr, "cat "+q(errFile)+"; rm -f "+q(errFile)+"; printf '\\n"+statusMarker+"0\\n'"); catErr != nil && err == nil {
+		err = fmt.Errorf("read the program's stderr: %w", catErr)
 	}
 	return status, err
 }

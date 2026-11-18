@@ -126,8 +126,12 @@ func (ef execFlags) spec(args []string) (remote.Spec, error) {
 		if !ok || value == "" {
 			return remote.Spec{}, fmt.Errorf("--sync-env %s: %s is not set; set it to the directory to copy", name, name)
 		}
-		spec.Env[name] = value
-		syncs = append(syncs, value)
+		abs, err := filepath.Abs(value)
+		if err != nil {
+			return remote.Spec{}, err
+		}
+		spec.Env[name] = abs
+		syncs = append(syncs, abs)
 	}
 	for _, d := range syncs {
 		abs, err := filepath.Abs(d)

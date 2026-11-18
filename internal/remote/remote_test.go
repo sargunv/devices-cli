@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -147,24 +148,22 @@ func (f *fakeShell) Name() string { return "fake" }
 
 func (f *fakeShell) Run(_ context.Context, _ io.Reader, script string) (string, error) {
 	f.scripts = append(f.scripts, script)
-	if strings.HasPrefix(script, "[ -e ") {
+	if checks := checkPattern.FindAllStringSubmatch(script, -1); checks != nil {
 		var out []string
-		for i, check := range strings.Split(script, "; ") {
-			if strings.HasPrefix(check, "[ -e ") {
-				dir := strings.TrimSuffix(strings.Fields(check)[2], "/"+completeMarker)
-				if !f.made[dir] {
-					out = append(out, string(rune('0'+i)))
-				}
+		for _, c := range checks {
+			if !f.made[strings.TrimSuffix(c[1], "/"+completeMarker)] {
+				out = append(out, c[2])
 			}
 		}
 		return strings.Join(out, "\n"), nil
 	}
 	if strings.HasPrefix(script, "touch ") {
-		dir := strings.Fields(script)[5]
-		f.made[dir] = true
+		f.made[strings.Fields(script)[5]] = true
 	}
 	return "", nil
 }
+
+var checkPattern = regexp.MustCompile(`if \[ -e (\S+) \]; then touch \S+; else echo (\d+); fi`)
 
 func TestCopyMissingCopiesOnce(t *testing.T) {
 	sh := &fakeShell{made: map[string]bool{"/d/a": true}}

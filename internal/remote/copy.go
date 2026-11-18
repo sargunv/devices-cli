@@ -10,7 +10,12 @@ import (
 )
 
 // completeMarker marks a copy that finished; a copy without it is redone.
+// Each run that uses the copy touches it.
 const completeMarker = ".devices-cli-complete"
+
+// staleAfter is how long an earlier copy, or an unfinished one, goes
+// untouched before a new copy of the same directory removes it.
+const staleAfter = "60" // minutes, for find -mmin
 
 // Shell runs short POSIX shell commands on a device.
 type Shell interface {
@@ -27,7 +32,8 @@ type Locker func(name string) (func(), error)
 // Copy is a directory on a device that Fill writes into a temporary directory
 // before it takes its final name, Dir. Dir's name identifies the contents, so
 // a finished copy is reused as it is. When Stale is set, the other
-// directories in it are earlier copies, which a new copy replaces.
+// directories in it are earlier copies, which a new copy removes once they
+// have gone unused for staleAfter: a concurrent run may still use one.
 type Copy struct {
 	Dir   string
 	Stale string
@@ -68,7 +74,11 @@ func copyOne(ctx context.Context, sh Shell, c Copy, lock Locker) error {
 	}
 	script := "touch " + q(path.Join(tmp, completeMarker)) + " && rm -rf " + q(c.Dir) + " && mv " + q(tmp) + " " + q(c.Dir)
 	if c.Stale != "" {
-		script += " && for d in " + q(c.Stale) + "/*; do [ \"$d\" = " + q(c.Dir) + " ] || rm -rf \"$d\"; done"
+		// A finished copy's marker shows its last use; an unfinished one's
+		// directory shows when its upload began.
+		script += " && for d in " + q(c.Stale) + "/*; do [ \"$d\" = " + q(c.Dir) + " ] && continue; " +
+			"m=\"$d/" + completeMarker + "\"; [ -e \"$m\" ] || m=\"$d\"; " +
+			"[ -n \"$(find \"$m\" -maxdepth 0 -mmin +" + staleAfter + ")\" ] && rm -rf \"$d\"; done; true"
 	}
 	if _, err := sh.Run(ctx, nil, script); err != nil {
 		return fmt.Errorf("finish %s on %s: %w", c.Dir, sh.Name(), err)
@@ -80,7 +90,8 @@ func copyOne(ctx context.Context, sh Shell, c Copy, lock Locker) error {
 func missingCopies(ctx context.Context, sh Shell, copies []Copy) ([]Copy, error) {
 	var script strings.Builder
 	for i, c := range copies {
-		fmt.Fprintf(&script, "[ -e %s ] || echo %d; ", ShellQuote(path.Join(c.Dir, completeMarker)), i)
+		marker := ShellQuote(path.Join(c.Dir, completeMarker))
+		fmt.Fprintf(&script, "if [ -e %s ]; then touch %s; else echo %d; fi; ", marker, marker, i)
 	}
 	script.WriteString("true")
 	out, err := sh.Run(ctx, nil, script.String())
