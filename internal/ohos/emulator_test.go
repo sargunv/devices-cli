@@ -30,7 +30,8 @@ for file; do case "$file" in *.qcow2) touch "$file" ;; esac; done
 // Every call goes to a log beside it.
 const fakeHDC = `#!/bin/sh
 dir=$(dirname "$0")
-echo "$@" >> "$dir/hdc-calls"
+# printf, not echo, which dash's echo would expand the script's \n in.
+printf '%s\n' "$*" >> "$dir/hdc-calls"
 count() { n=$(cat "$dir/$1" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "$dir/$1"; echo $n; }
 case "$*" in
   "tconn "*) echo "Connect OK" ;;

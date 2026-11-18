@@ -242,7 +242,10 @@ func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 		if err == nil {
 			// The file system fills the larger partition, while mounted. A
 			// concurrent get may be growing it too, so a failure is retried.
-			if _, err = (hdcShell{path: r.HDC, key: inst.ID}).Run(ctx, nil, "resize2fs "+dataDevice); err == nil {
+			resizeCtx, cancel := context.WithDeadline(ctx, deadline)
+			_, err = (hdcShell{path: r.HDC, key: inst.ID}).Run(resizeCtx, nil, "resize2fs "+dataDevice)
+			cancel()
+			if err == nil {
 				return nil
 			}
 			err = fmt.Errorf("resize2fs %s: %w", dataDevice, err)
