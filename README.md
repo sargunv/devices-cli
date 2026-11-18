@@ -185,6 +185,49 @@ and otherwise falls back to an emulator. It never goes to another worktree:
 assigning a device that another worktree holds fails until that worktree
 releases it.
 
+### Running a program on the device
+
+```sh
+devices-cli exec <kind> [get flags] [--env <name or glob>]... [--sync <dir>]... [--sync-env <name>]... -- <program> [arguments]
+```
+
+gets the worktree's device as `get` does, runs a program built on the host for
+it, and exits with the program's exit status. The program's output goes to
+stdout and stderr, and devices-cli's own messages go to stderr.
+
+- `--env` forwards host environment variables, by name or by a glob such as
+  `RUST_*`.
+- `--sync` copies a host directory to the device. `--sync-env` copies the
+  directory that a variable names and forwards the variable.
+- An argument, a forwarded value, or the working directory that is the program
+  or a synced directory, or lies inside one, becomes the path of its copy.
+
+Copies are named for their contents, so an unchanged program or directory is
+copied once, however many times it runs, and concurrent runs never see a partial
+copy. Symbolic links are copied as what they point to; version control
+directories and directories with a `CACHEDIR.TAG`, such as Cargo's `target`, are
+left out. Android and OpenHarmony devices keep the copies in
+`/data/local/tmp/devices-cli`. Apple simulators and FreeBSD VMs see the host's
+paths, so nothing is copied; a FreeBSD VM's program and synced directories must
+lie in the worktree, which the VM mounts. A simulator starts the program in its
+own data directory, not the working directory. On OpenHarmony, the program's
+stdout arrives a line behind, and its stderr after it exits, so `exec` suits
+programs that run to completion, such as tests, rather than interactive ones.
+
+`exec` works as Cargo's
+[target runner](https://doc.rust-lang.org/cargo/reference/config.html#targettriplerunner),
+which appends the program and its arguments. End the runner with `--`, so that
+the program's flags are not taken for devices-cli's:
+
+```sh
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUNNER='devices-cli exec android --api 36 --sync-env CARGO_MANIFEST_DIR --env RUST_* --'
+cargo test --target aarch64-linux-android   # or cargo nextest run
+```
+
+Cargo sets `CARGO_MANIFEST_DIR` when it runs a test, so a test that reads its
+fixtures from `std::env::var("CARGO_MANIFEST_DIR")` finds the device's copy;
+`env!("CARGO_MANIFEST_DIR")` keeps the host's path.
+
 ### Other commands
 
 - `devices-cli release` stops the worktree's instances and unassigns its

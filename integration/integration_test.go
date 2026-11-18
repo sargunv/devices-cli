@@ -10,10 +10,12 @@ package integration
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -184,6 +186,8 @@ func TestAndroidEmulators(t *testing.T) {
 		t.Errorf("reusing an instance took %s", elapsed)
 	}
 
+	e.checkExec(a, true, true, shellProgram("/system/bin/sh"), request...)
+
 	// Both slots are taken.
 	if _, stderr, err := e.run(e.owner(), append([]string{"get", "--wait", "0"}, request...)...); err == nil || !strings.Contains(stderr, "max_instances") {
 		t.Errorf("a third owner got a device past the cap: %v", err)
@@ -235,6 +239,7 @@ func TestAppleSimulators(t *testing.T) {
 	if id := e.get(a, "ios"); id != udidA {
 		t.Errorf("a got %s, then %s", udidA, id)
 	}
+	e.checkExec(a, false, false, e.simulatorProgram, "ios")
 
 	// A simulator whose owner is gone is deleted at the next command, and a
 	// released one is deleted too.
@@ -282,6 +287,7 @@ func TestOHOSEmulators(t *testing.T) {
 	if id := e.get(a, "ohos"); id != keyA {
 		t.Errorf("a got %s, then %s", keyA, id)
 	}
+	e.checkExec(a, true, true, shellProgram("/system/bin/sh"), "ohos")
 
 	if err := os.RemoveAll(b); err != nil {
 		t.Fatal(err)
@@ -336,6 +342,7 @@ func TestFreeBSDVMs(t *testing.T) {
 	if id := e.get(a, request...); id != hostA {
 		t.Errorf("a got %s, then %s", hostA, id)
 	}
+	e.checkExec(a, false, true, shellProgram("/bin/sh"), request...)
 
 	// Removing b's owner shuts its VM down at the next command; release shuts
 	// a's down.
@@ -357,4 +364,125 @@ func TestFreeBSDVMs(t *testing.T) {
 			t.Errorf("%s still answers SSH: %q", host, got)
 		}
 	}
+}
+
+// checkExec runs a program through exec on the owner's device, with a synced
+// fixture directory that holds a symbolic link, and checks its output, its
+// exit status, and that the paths into the fixtures reach their copy. On a
+// device that sees the host's paths, the copy is the directory itself. When
+// keepsDir is set, the program runs in the working directory's copy.
+// program writes the program into a file and returns its path.
+func (e *env) checkExec(owner string, copied, keepsDir bool, program func(dir string) string, request ...string) {
+	e.t.Helper()
+	fixtures := filepath.Join(owner, "fixtures")
+	if err := os.MkdirAll(fixtures, 0o755); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(owner, "shared.txt"), []byte("linked\n"), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fixtures, "hello.txt"), []byte("hello\n"), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.Symlink("../shared.txt", filepath.Join(fixtures, "link.txt")); err != nil {
+		e.t.Fatal(err)
+	}
+	prog := program(owner)
+
+	args := []string{"exec"}
+	args = append(args, request...)
+	args = append(args, "--sync-env", "FIXTURES", "--", prog, filepath.Join(fixtures, "hello.txt"))
+	cmd := exec.Command(e.bin, args...)
+	cmd.Dir = fixtures
+	cmd.Env = slices.Concat(e.vars, []string{"FIXTURES=" + fixtures})
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	e.t.Logf("exec in %s:\nstdout:\n%s\nstderr:\n%s", fixtures, stdout.String(), stderr.String())
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 {
+		e.t.Fatalf("exec = %v; want the program's exit status 3", err)
+	}
+	lines := map[string]string{}
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			lines[k] = v
+		}
+	}
+	if lines["hello"] != "hello" || lines["link"] != "linked" {
+		e.t.Errorf("the program read %q and %q from the fixtures; want hello and linked", lines["hello"], lines["link"])
+	}
+	if !strings.Contains(stderr.String(), "to stderr") {
+		e.t.Error("the program's stderr did not come through")
+	}
+	got := lines["fixtures"]
+	if copied == (got == fixtures) || lines["arg"] != got+"/hello.txt" || keepsDir && lines["pwd"] != got {
+		e.t.Errorf("FIXTURES=%q, arg=%q, pwd=%q; want the fixtures' copy (copied: %v, working directory kept: %v)", got, lines["arg"], lines["pwd"], copied, keepsDir)
+	}
+}
+
+// shellProgram writes a shell script for exec's check, run by the shell at
+// interpreter.
+func shellProgram(interpreter string) func(dir string) string {
+	return func(dir string) string {
+		path := filepath.Join(dir, "program.sh")
+		script := "#!" + interpreter + `
+echo "hello=$(cat "$FIXTURES/hello.txt")"
+echo "link=$(cat "$FIXTURES/link.txt")"
+echo "fixtures=$FIXTURES"
+echo "arg=$1"
+echo "pwd=$(pwd -P)"
+echo "to stderr" >&2
+exit 3
+`
+		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+			panic(err)
+		}
+		return path
+	}
+}
+
+// simulatorProgram compiles exec's check program for the iOS simulator, which
+// runs only programs built for it.
+func (e *env) simulatorProgram(dir string) string {
+	source := filepath.Join(dir, "program.c")
+	program := filepath.Join(dir, "program")
+	code := `#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static void put(const char *key, const char *dir, const char *name) {
+	char path[4096], line[256] = "";
+	snprintf(path, sizeof path, "%s/%s", dir, name);
+	FILE *f = fopen(path, "r");
+	if (f) {
+		if (fgets(line, sizeof line, f)) line[strcspn(line, "\n")] = 0;
+		fclose(f);
+	}
+	printf("%s=%s\n", key, line);
+}
+
+int main(int argc, char **argv) {
+	const char *fixtures = getenv("FIXTURES");
+	char cwd[4096];
+	put("hello", fixtures, "hello.txt");
+	put("link", fixtures, "link.txt");
+	printf("fixtures=%s\narg=%s\npwd=%s\n", fixtures, argc > 1 ? argv[1] : "", getcwd(cwd, sizeof cwd));
+	fprintf(stderr, "to stderr\n");
+	return 3;
+}
+`
+	if err := os.WriteFile(source, []byte(code), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+	arch := "arm64"
+	if runtime.GOARCH == "amd64" {
+		arch = "x86_64"
+	}
+	out, err := exec.Command("xcrun", "--sdk", "iphonesimulator", "clang", "-arch", arch, "-mios-simulator-version-min=17.0", "-o", program, source).CombinedOutput()
+	if err != nil {
+		e.t.Fatalf("compile the simulator program: %v\n%s", err, out)
+	}
+	return program
 }
