@@ -211,7 +211,8 @@ left out. Android and OpenHarmony devices keep the copies in
 paths, so nothing is copied; a FreeBSD VM's program and synced directories must
 lie in the worktree, which the VM mounts. A simulator starts the program in its
 own data directory, not the working directory. On OpenHarmony, the program's
-stderr arrives after it exits.
+stdout arrives a line behind, and its stderr after it exits, so `exec` suits
+programs that run to completion, such as tests, rather than interactive ones.
 
 `exec` works as Cargo's
 [target runner](https://doc.rust-lang.org/cargo/reference/config.html#targettriplerunner),
