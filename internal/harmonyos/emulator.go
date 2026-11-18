@@ -260,21 +260,25 @@ type Kind struct {
 	Emulator string
 }
 
-// Alive implements devices.Kind. It checks the process's command line, so a
-// reused process ID does not count.
+// Alive implements devices.Kind. It checks the command lines in the
+// instance's process group for its name, so a reused process ID does not
+// count, and neither does a group without the emulator.
 func (Kind) Alive(_ context.Context, inst state.Instance) bool { return alive(inst) }
 
 func alive(inst state.Instance) bool {
-	return process.Running(inst.PID, "-hvd "+instanceName(inst.Port))
+	return process.GroupRunning(inst.PID, instanceName(inst.Port))
 }
 
 // Stop implements devices.Kind. It asks the Emulator to stop the instance,
-// signals the process if it is still running, and removes the instance.
+// signals the instance's process group if any of the emulator is left, and
+// removes the instance's files once none is.
 func (k Kind) Stop(ctx context.Context, inst state.Instance) error {
 	name := instanceName(inst.Port)
 	if alive(inst) && k.Emulator != "" {
 		_ = exec.CommandContext(ctx, k.Emulator, "-stop", name).Run()
-		process.WaitGone(inst.PID, 15*time.Second)
+		for deadline := time.Now().Add(15 * time.Second); alive(inst) && time.Now().Before(deadline); {
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
 	if alive(inst) {
 		if err := process.StopGroup(inst.PID, 15*time.Second); err != nil {
