@@ -174,7 +174,11 @@ func TestPrefixLifecycle(t *testing.T) {
 	if err := os.Unsetenv("WINEDEBUG"); err != nil {
 		t.Fatal(err)
 	}
-	workDir := t.TempDir()
+	// Resolved, as pwd prints it: macOS's temporary directory is a link.
+	workDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	status, err := Exec(ctx, inst.ID, remote.Spec{Program: "/bin/app.exe", Args: []string{"3"}, Dir: workDir, Stdout: &out, Stderr: &out})
 	if err != nil {
 		t.Fatal(err)
