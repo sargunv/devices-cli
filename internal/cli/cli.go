@@ -20,6 +20,7 @@ import (
 	"github.com/sargunv/devices-cli/internal/harmonyos"
 	"github.com/sargunv/devices-cli/internal/ohos"
 	"github.com/sargunv/devices-cli/internal/state"
+	"github.com/sargunv/devices-cli/internal/wine"
 )
 
 // Execute runs the command line and returns the process exit code.
@@ -101,6 +102,7 @@ func (a *app) manager() (*devices.Manager, error) {
 	// Collection runs without DevEco Studio too, and then signals the process.
 	emulator, _ := harmonyos.FindEmulator()
 	kinds[harmonyos.KindName] = harmonyos.Kind{Root: filepath.Join(stateDir, "harmonyos"), Emulator: emulator}
+	kinds[wine.KindName] = wine.Kind{}
 	return &devices.Manager{
 		Store:      state.Store{Dir: stateDir},
 		Config:     cfg,

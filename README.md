@@ -1,10 +1,10 @@
 # devices-cli
 
 Gives each git worktree its own ephemeral test device: an Android emulator, an
-Apple simulator, an OpenHarmony or HarmonyOS emulator, or a FreeBSD virtual
-machine. A project asks for a device and gets its ID; devices-cli starts the
-device on demand, keeps it apart from every other worktree's, caps how many run
-at once, and stops it when the worktree goes away.
+Apple simulator, an OpenHarmony or HarmonyOS emulator, a FreeBSD virtual
+machine, or a Wine prefix. A project asks for a device and gets its ID;
+devices-cli starts the device on demand, keeps it apart from every other
+worktree's, caps how many run at once, and stops it when the worktree goes away.
 
 It is for machines that run many coding agents or checkouts side by side.
 Sharing one emulator between worktrees breaks suites that install an app, and
@@ -197,6 +197,32 @@ anyvm comes from `ANYVM`, the path of `anyvm.py`, or from `anyvm` on `PATH`. It
 needs `python3`, QEMU, and UEFI firmware (the `ovmf` package on Debian and
 Ubuntu). FreeBSD VMs run only on a Linux host with KVM.
 
+### Wine prefixes
+
+```sh
+devices-cli get wine [--dll <path>]...
+```
+
+prints the path of the worktree's Wine prefix, for `WINEPREFIX`, once Wine has
+booted in it:
+
+```sh
+WINEPREFIX="$(devices-cli get wine)" wine ./app.exe
+```
+
+Each `--dll` names a 64-bit DLL, or a directory of them, that devices-cli copies
+into the prefix's `system32` directory and has Wine load instead of its own, as
+`native,builtin`. That is how a prefix gets
+[vkd3d-proton](https://github.com/HansKristian-Work/vkd3d-proton)'s Direct3D 12
+or [DXVK](https://github.com/doitsujin/dxvk)'s, and DLLs that a program loads
+from the system directory. A prefix only serves requests for the same DLLs.
+
+Prefixes live in devices-cli's state directory, one per worktree and set of
+DLLs, and are deleted when they are released or collected. devices-cli starts
+the prefix's wineserver and services itself, without the program's output
+attached, and keeps them running until then. `wine` and `wineserver` must be on
+`PATH`.
+
 ### Physical Android devices
 
 ```sh
@@ -231,10 +257,11 @@ copied once, however many times it runs, and concurrent runs never see a partial
 copy. Symbolic links are copied as what they point to; version control
 directories and directories with a `CACHEDIR.TAG`, such as Cargo's `target`, are
 left out. Android, OpenHarmony and HarmonyOS devices keep the copies in
-`/data/local/tmp/devices-cli`. Apple simulators and FreeBSD VMs see the host's
-paths, so nothing is copied; a FreeBSD VM's program and synced directories must
-lie in the worktree, which the VM mounts. A simulator starts the program in its
-own data directory, not the working directory. On OpenHarmony and HarmonyOS, the
+`/data/local/tmp/devices-cli`. Apple simulators, FreeBSD VMs and Wine prefixes
+see the host's paths, so nothing is copied, and a Wine program sees the host's
+environment too; a FreeBSD VM's program and synced directories must lie in the
+worktree, which the VM mounts. A simulator starts the program in its own data
+directory, not the working directory. On OpenHarmony and HarmonyOS, the
 program's stdout arrives a line behind, and its stderr after it exits, so `exec`
 suits programs that run to completion, such as tests, rather than interactive
 ones.
