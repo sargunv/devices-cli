@@ -36,6 +36,8 @@ type Request struct {
 	// DLLs are the absolute host paths of the DLLs that replace Wine's own,
 	// sorted.
 	DLLs []string
+	// identity digests the DLLs' paths, sizes and modification times.
+	identity string
 	// Root holds one directory per prefix.
 	Root        string
 	BootTimeout time.Duration
@@ -91,6 +93,16 @@ func NewRequest(dlls []string) (*Request, error) {
 		}
 		names[name] = dll
 	}
+	// A DLL rebuilt in place gets a new prefix rather than its stale copy.
+	var identity strings.Builder
+	for _, dll := range req.DLLs {
+		info, err := os.Stat(dll)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(&identity, "%s\x00%d\x00%d\x00", dll, info.Size(), info.ModTime().UnixNano())
+	}
+	req.identity = digest(identity.String())
 	return req, nil
 }
 
@@ -100,12 +112,12 @@ func isDLL(name string) bool { return strings.EqualFold(filepath.Ext(name), ".dl
 func (r *Request) Kind() string { return KindName }
 
 // Key implements devices.Request. A prefix only serves requests for the same
-// DLLs.
+// DLLs, unchanged.
 func (r *Request) Key() string {
 	if len(r.DLLs) == 0 {
 		return "wine"
 	}
-	return "wine " + digest(strings.Join(r.DLLs, "\x00"))
+	return "wine " + r.identity
 }
 
 // Description implements devices.Request.
@@ -312,8 +324,11 @@ func (Kind) Alive(_ context.Context, inst state.Instance) bool {
 // Stop implements devices.Kind. It ends the prefix's Wine processes with the
 // wineserver that started them, else the one on PATH, and removes the prefix.
 // wineserver --kill fails alike when no server runs, so its status is not
-// checked.
+// checked. It runs even when ctx is cancelled, as when a get that started the
+// prefix is interrupted.
 func (Kind) Stop(ctx context.Context, inst state.Instance) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
 	wineserver, _ := os.ReadFile(filepath.Join(inst.ID, serverFile))
 	path := string(wineserver)
 	if _, err := os.Stat(path); err != nil {
@@ -322,7 +337,10 @@ func (Kind) Stop(ctx context.Context, inst state.Instance) error {
 	if path != "" {
 		cmd := exec.CommandContext(ctx, path, "--kill")
 		cmd.Env = append(os.Environ(), "WINEPREFIX="+inst.ID)
-		_ = cmd.Run()
+		var exit *exec.ExitError
+		if err := cmd.Run(); err != nil && !errors.As(err, &exit) {
+			return fmt.Errorf("end the Wine processes of %s: %w", inst.ID, err)
+		}
 	}
 	return os.RemoveAll(inst.ID)
 }

@@ -83,6 +83,18 @@ func TestNewRequestExpandsDirectories(t *testing.T) {
 	if req.Key() == other.Key() {
 		t.Fatalf("requests for different DLLs share the key %q", req.Key())
 	}
+
+	// A DLL rebuilt in place changes the key.
+	if err := os.WriteFile(filepath.Join(dir, "vkd3d", "d3d12.dll"), []byte("rebuilt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := NewRequest([]string{filepath.Join(dir, "vkd3d")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebuilt.Key() == other.Key() {
+		t.Fatalf("a rebuilt DLL keeps the key %q", other.Key())
+	}
 }
 
 func TestNewRequestRejects(t *testing.T) {
@@ -192,7 +204,10 @@ func TestPrefixLifecycle(t *testing.T) {
 
 	// Collection may run without Wine on PATH.
 	t.Setenv("PATH", "/usr/bin:/bin")
-	if err := (Kind{}).Stop(ctx, inst); err != nil {
+	// Stop runs even after an interrupted get cancelled its context.
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := (Kind{}).Stop(cancelled, inst); err != nil {
 		t.Fatal(err)
 	}
 	if (Kind{}).Alive(ctx, inst) {
