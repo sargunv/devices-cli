@@ -39,12 +39,12 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      # QEMU, the Oniro 6.1 image, and hdc from the OpenHarmony 6.1 SDK, whose
+      # QEMU and qemu-img, the Oniro 6.1 image, and hdc from the OpenHarmony 6.1 SDK, whose
       # archive is read only as far as the toolchains.
       - name: Install QEMU, the emulator image, and hdc
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends qemu-system-x86
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86 qemu-utils
           curl -fsSL -o "$RUNNER_TEMP/oniro.zip" https://github.com/eclipse-oniro4openharmony/device_board_oniro/releases/download/v6.1/oniro_emulator.zip
           echo "a30e01f1b161e0fdcd91263f30f29cc92bfa49c1776d5ee2c46caefef055b2da  $RUNNER_TEMP/oniro.zip" | sha256sum --check
           unzip -q "$RUNNER_TEMP/oniro.zip" -d "$RUNNER_TEMP/oniro"
