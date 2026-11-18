@@ -215,7 +215,8 @@ into the prefix's `system32` directory and has Wine load instead of its own, as
 `native,builtin`. That is how a prefix gets
 [vkd3d-proton](https://github.com/HansKristian-Work/vkd3d-proton)'s Direct3D 12
 or [DXVK](https://github.com/doitsujin/dxvk)'s, and DLLs that a program loads
-from the system directory. A prefix only serves requests for the same DLLs.
+from the system directory. A prefix only serves requests for the same DLLs, so a
+DLL rebuilt in place gets a new one.
 
 Prefixes live in devices-cli's state directory, one per worktree and set of
 DLLs, and are deleted when they are released or collected. devices-cli starts
