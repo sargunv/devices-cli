@@ -15,6 +15,7 @@ import (
 	"github.com/sargunv/devices-cli/internal/config"
 	"github.com/sargunv/devices-cli/internal/devices"
 	"github.com/sargunv/devices-cli/internal/freebsd"
+	"github.com/sargunv/devices-cli/internal/harmonyos"
 	"github.com/sargunv/devices-cli/internal/ohos"
 	"github.com/sargunv/devices-cli/internal/remote"
 	"github.com/sargunv/devices-cli/internal/state"
@@ -48,8 +49,8 @@ CACHEDIR.TAG, such as Cargo's target directory, are left out.
 Apple simulators and FreeBSD VMs see the host's paths, so nothing is copied
 there; the program and the synced directories of a FreeBSD VM must lie in the
 worktree, which the VM mounts. A simulator starts the program in its own data
-directory, not the working directory. On OpenHarmony, the program's stdout
-arrives a line behind, and its stderr after it exits.
+directory, not the working directory. On OpenHarmony and HarmonyOS, the
+program's stdout arrives a line behind, and its stderr after it exits.
 
 exec works as Cargo's target runner, which appends the program and its
 arguments to the command. End the runner with --, so that the program's
@@ -165,6 +166,8 @@ func (a *app) exec(cmd *cobra.Command, flags *getFlags, req devices.Request, spe
 	case *apple.Request:
 		return apple.Exec(ctx, id, spec)
 	case *ohos.Request:
+		return ohos.Exec(ctx, r.HDC, id, ownerPath, spec, lock)
+	case *harmonyos.Request:
 		return ohos.Exec(ctx, r.HDC, id, ownerPath, spec, lock)
 	case *freebsd.Request:
 		return freebsd.Exec(ctx, id, ownerPath, spec)

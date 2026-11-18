@@ -14,6 +14,7 @@ import (
 	"github.com/sargunv/devices-cli/internal/config"
 	"github.com/sargunv/devices-cli/internal/devices"
 	"github.com/sargunv/devices-cli/internal/freebsd"
+	"github.com/sargunv/devices-cli/internal/harmonyos"
 	"github.com/sargunv/devices-cli/internal/ohos"
 	"github.com/sargunv/devices-cli/internal/owner"
 )
@@ -51,7 +52,7 @@ func (a *app) kindCommands() []kindCommand {
 	for _, platform := range apple.Platforms {
 		kinds = append(kinds, appleKind(platform))
 	}
-	return append(kinds, ohosKind(), freebsdKind())
+	return append(kinds, ohosKind(), harmonyosKind(), freebsdKind())
 }
 
 func (a *app) getCommand() *cobra.Command {
@@ -223,6 +224,44 @@ an x86_64 Linux host that has it and emulates the machine elsewhere.`,
 			if req.LogDir, err = logDir(); err != nil {
 				return nil, err
 			}
+			return req, nil
+		},
+	}
+}
+
+func harmonyosKind() kindCommand {
+	var deviceType, osVersion string
+	return kindCommand{
+		name:   harmonyos.KindName,
+		usage:  " [flags]",
+		id:     "hdc connect key",
+		device: "a HarmonyOS emulator",
+		long: `devices-cli uses the worktree's emulator, or creates one from a system image
+that DevEco Studio downloaded and starts it, and waits until the system has
+booted. Each worktree's emulator has its own data, and is deleted when it is
+released, idle too long, or its worktree is gone. The Emulator comes from
+DevEco Studio on macOS, or from HARMONYOS_EMULATOR; hdc from DevEco Studio,
+else PATH. The emulator opens a window.`,
+		example: `  hdc -t "$(devices-cli get harmonyos)" shell uname -a
+  devices-cli get harmonyos --device-type tablet --os-version 6.0.2`,
+		bind: func(cmd *cobra.Command) {
+			cmd.Flags().StringVar(&deviceType, "device-type", "phone", "device type of the system image, such as phone, tablet, or foldable")
+			cmd.Flags().StringVar(&osVersion, "os-version", "", "system image version, or part of it, such as 6.0.2 (default: the newest downloaded)")
+		},
+		request: func(ctx context.Context, flags *getFlags) (devices.Request, error) {
+			req, err := harmonyos.NewRequest(ctx, deviceType, osVersion)
+			if err != nil {
+				return nil, err
+			}
+			stateDir, err := config.StateDir()
+			if err != nil {
+				return nil, err
+			}
+			req.Root = filepath.Join(stateDir, "harmonyos")
+			if req.LogDir, err = logDir(); err != nil {
+				return nil, err
+			}
+			req.BootTimeout = flags.bootTimeout
 			return req, nil
 		},
 	}

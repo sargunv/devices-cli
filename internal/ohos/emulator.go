@@ -228,11 +228,11 @@ func (r *Request) WaitReady(ctx context.Context, inst state.Instance) error {
 // that has not finished. A locked screen gets an unlock attempt, which the
 // next check confirms.
 func (r *Request) ready(ctx context.Context, key string) error {
-	if _, err := hdc(ctx, r.HDC, "tconn", key); err != nil {
+	if _, err := HDC(ctx, r.HDC, "tconn", key); err != nil {
 		return fmt.Errorf("hdc tconn %s: %w", key, err)
 	}
 	shell := func(command ...string) (string, error) {
-		out, err := hdc(ctx, r.HDC, append([]string{"-t", key, "shell"}, command...)...)
+		out, err := HDC(ctx, r.HDC, append([]string{"-t", key, "shell"}, command...)...)
 		if err != nil {
 			return out, fmt.Errorf("hdc -t %s shell %s: %w: %s", key, strings.Join(command, " "), err, out)
 		}
@@ -302,9 +302,9 @@ func screenLocked(dump string) (locked, ok bool) {
 	return false, false
 }
 
-// hdc runs an hdc command with a deadline, since a call to a guest that is
+// HDC runs an hdc command with a deadline, since a call to a guest that is
 // still booting can block.
-func hdc(ctx context.Context, path string, args ...string) (string, error) {
+func HDC(ctx context.Context, path string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, args...)
@@ -337,7 +337,7 @@ func alive(inst state.Instance) bool {
 // port is free for the next instance at once, then stops QEMU.
 func (Kind) Stop(ctx context.Context, inst state.Instance) error {
 	if hdcPath, err := exec.LookPath("hdc"); err == nil {
-		_, _ = hdc(ctx, hdcPath, "tconn", inst.ID, "-remove")
+		_, _ = HDC(ctx, hdcPath, "tconn", inst.ID, "-remove")
 	}
 	if !alive(inst) {
 		return nil
