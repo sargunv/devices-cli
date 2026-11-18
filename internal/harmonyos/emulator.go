@@ -182,8 +182,9 @@ func (r *Request) Start(ctx context.Context, owner string, running []state.Insta
 		return state.Instance{}, fmt.Errorf("no free hdc port between %d and %d", firstPort, lastPort)
 	}
 	name := instanceName(port)
-	// A leftover of an instance that devices-cli lost track of.
-	removeInstance(r.Root, name)
+	// A leftover of an instance that devices-cli lost track of; -create fails
+	// on any it could not remove.
+	_ = removeInstance(r.Root, name)
 	if err := os.MkdirAll(r.Root, 0o755); err != nil {
 		return state.Instance{}, err
 	}
@@ -206,7 +207,7 @@ func (r *Request) Start(ctx context.Context, owner string, running []state.Insta
 	// out of the terminal's signals.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		removeInstance(r.Root, name)
+		_ = removeInstance(r.Root, name)
 		return state.Instance{}, fmt.Errorf("start the HarmonyOS emulator: %w", err)
 	}
 	go func() { _ = cmd.Wait() }()
@@ -285,15 +286,20 @@ func (k Kind) Stop(ctx context.Context, inst state.Instance) error {
 			return err
 		}
 	}
-	removeInstance(k.Root, name)
-	return nil
+	// An error keeps the instance recorded, so collection retries.
+	return removeInstance(k.Root, name)
 }
 
 // removeInstance deletes an instance's files: its directory and the .ini that
 // names it.
-func removeInstance(root, name string) {
-	_ = os.RemoveAll(filepath.Join(root, name))
-	_ = os.Remove(filepath.Join(root, name+".ini"))
+func removeInstance(root, name string) error {
+	if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
+		return fmt.Errorf("remove HarmonyOS emulator %s: %w", name, err)
+	}
+	if err := os.Remove(filepath.Join(root, name+".ini")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove HarmonyOS emulator %s: %w", name, err)
+	}
+	return nil
 }
 
 // RemoveDefinition implements devices.Kind. HarmonyOS emulators have no
