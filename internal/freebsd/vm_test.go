@@ -30,7 +30,8 @@ echo "The VM is still running in background."
 // The fake ssh answers every host, reports FAKE_MOUNT as the guest's one
 // mount point, and stops the QEMU stand-in on shutdown.
 const fakeSSH = `#!/bin/sh
-echo "$@" >> "$(dirname "$0")/ssh-calls"
+# printf, not echo, which dash's echo would expand the command's \n in.
+printf '%s\n' "$*" >> "$(dirname "$0")/ssh-calls"
 case "$*" in
   *"stat -f %d '$FAKE_MOUNT' "*) printf '2\n1\n' ;;
   *"stat -f %d "*) printf '1\n1\n' ;;
