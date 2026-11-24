@@ -235,12 +235,13 @@ assigns a connected device to the worktree. `get android` then returns it to
 this worktree whenever it is connected and runs the requested API level and ABI,
 and otherwise falls back to an emulator. It never goes to another worktree:
 assigning a device that another worktree holds fails until that worktree
-releases it.
+releases it. Assigned devices only need `adb` (from `ANDROID_HOME` or `PATH`);
+starting an emulator still needs `ANDROID_HOME`.
 
 ### Running a program on the device
 
 ```sh
-devices-cli exec <kind> [get flags] [--env <name or glob>]... [--sync <dir>]... [--sync-env <name>]... -- <program> [arguments]
+devices-cli exec <kind> [get flags] [--env <name or glob>]... [--sync <path>]... [--sync-env <name>]... -- <program> [arguments]
 ```
 
 gets the worktree's device as `get` does, runs a program built on the host for
@@ -249,19 +250,19 @@ stdout and stderr, and devices-cli's own messages go to stderr.
 
 - `--env` forwards host environment variables, by name or by a glob such as
   `RUST_*`.
-- `--sync` copies a host directory to the device. `--sync-env` copies the
-  directory that a variable names and forwards the variable.
+- `--sync` copies a host file or directory to the device. `--sync-env` copies
+  the file or directory that a variable names and forwards the variable.
 - An argument, a forwarded value, or the working directory that is the program
-  or a synced directory, or lies inside one, becomes the path of its copy.
+  or a synced path, or lies inside one, becomes the path of its copy.
 
-Copies are named for their contents, so an unchanged program or directory is
-copied once, however many times it runs, and concurrent runs never see a partial
-copy. Symbolic links are copied as what they point to; version control
+Copies are named for their contents, so an unchanged program, file or directory
+is copied once, however many times it runs, and concurrent runs never see a
+partial copy. Symbolic links are copied as what they point to; version control
 directories and directories with a `CACHEDIR.TAG`, such as Cargo's `target`, are
 left out. Android, OpenHarmony and HarmonyOS devices keep the copies in
 `/data/local/tmp/devices-cli`. Apple simulators, FreeBSD VMs and Wine prefixes
 see the host's paths, so nothing is copied, and a Wine program sees the host's
-environment too; a FreeBSD VM's program and synced directories must lie in the
+environment too; a FreeBSD VM's program and synced paths must lie in the
 worktree, which the VM mounts. A simulator starts the program in its own data
 directory, not the working directory. On OpenHarmony and HarmonyOS, the
 program's stdout arrives a line behind, and its stderr after it exits, so `exec`

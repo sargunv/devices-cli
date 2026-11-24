@@ -125,6 +125,9 @@ func (r *Request) Description() string {
 
 // Prepare installs missing SDK packages, writes the AVD, and primes a new AVD.
 func (r *Request) Prepare(ctx context.Context) error {
+	if r.SDK.Root == "" {
+		return errors.New("no Android SDK: set ANDROID_HOME to the SDK directory to start an emulator (a project usually sets it in its mise environment)")
+	}
 	var missing [][]string
 	for _, pkg := range [][]string{
 		{"platform-tools"},

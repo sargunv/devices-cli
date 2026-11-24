@@ -109,7 +109,7 @@ func missingCopies(ctx context.Context, sh Shell, copies []Copy) ([]Copy, error)
 }
 
 // Plan lays out a spec's copies under root on a device: the program in
-// bin/<key>/ and each synced directory in sync/<dir hash>/<contents key>/.
+// bin/<key>/ and each synced file or directory in sync/<path hash>/<contents key>/.
 // sendFile copies a host file into a device directory; sendTree unpacks a
 // tree into one. It returns the copies and the mapping from host paths to
 // their copies.
@@ -124,14 +124,33 @@ func Plan(spec Spec, root string, sendFile func(ctx context.Context, host, dir s
 		Fill: func(ctx context.Context, tmp string) error { return sendFile(ctx, spec.Program, tmp) },
 	}}
 	mapping := Mapping{spec.Program: path.Join(programDir, baseName(spec.Program))}
-	for _, dir := range spec.Syncs {
-		tree, err := Snapshot(dir)
+	for _, p := range spec.Syncs {
+		info, err := os.Stat(p)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read %s to sync it: %w", dir, err)
+			return nil, nil, fmt.Errorf("read %s to sync it: %w", p, err)
 		}
-		parent := path.Join(root, "sync", Hash(dir))
+		parent := path.Join(root, "sync", Hash(p))
+		if info.Mode().IsRegular() {
+			fileKey, err := FileKey(p)
+			if err != nil {
+				return nil, nil, fmt.Errorf("read %s to sync it: %w", p, err)
+			}
+			target := path.Join(parent, fileKey)
+			mapping[p] = path.Join(target, baseName(p))
+			host := p
+			copies = append(copies, Copy{
+				Dir:   target,
+				Stale: parent,
+				Fill:  func(ctx context.Context, tmp string) error { return sendFile(ctx, host, tmp) },
+			})
+			continue
+		}
+		tree, err := Snapshot(p)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read %s to sync it: %w", p, err)
+		}
 		target := path.Join(parent, tree.Key())
-		mapping[dir] = target
+		mapping[p] = target
 		copies = append(copies, Copy{
 			Dir:   target,
 			Stale: parent,

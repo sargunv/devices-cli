@@ -188,3 +188,59 @@ func TestCopyMissingCopiesOnce(t *testing.T) {
 		t.Errorf("filled %v again", filled)
 	}
 }
+
+func TestPlanSyncsRegularFiles(t *testing.T) {
+	dir := t.TempDir()
+	program := filepath.Join(dir, "launcher.sh")
+	syncedFile := filepath.Join(dir, "test-bin")
+	syncedDir := filepath.Join(dir, "pkg")
+	if err := os.WriteFile(program, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(syncedFile, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(syncedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(syncedDir, "fixture.txt"), []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var files, trees []string
+	copies, mapping, err := Plan(
+		Spec{Program: program, Syncs: []string{syncedFile, syncedDir}},
+		"/dev/root",
+		func(_ context.Context, host, _ string) error {
+			files = append(files, host)
+			return nil
+		},
+		func(_ context.Context, tree *Tree, _ string) error {
+			trees = append(trees, tree.Root)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(copies) != 3 {
+		t.Fatalf("got %d copies, want 3", len(copies))
+	}
+	for _, c := range copies {
+		if err := c.Fill(context.Background(), c.Dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !slices.Equal(files, []string{program, syncedFile}) {
+		t.Errorf("sendFile called with %v, want [%s %s]", files, program, syncedFile)
+	}
+	if !slices.Equal(trees, []string{syncedDir}) {
+		t.Errorf("sendTree called with %v, want [%s]", trees, syncedDir)
+	}
+	if got := mapping.Rewrite(syncedFile); !strings.HasSuffix(got, "/test-bin") || !strings.HasPrefix(got, "/dev/root/sync/") {
+		t.Errorf("synced file mapped to %q", got)
+	}
+	if got := mapping.Rewrite(filepath.Join(syncedDir, "fixture.txt")); !strings.HasSuffix(got, "/fixture.txt") || !strings.HasPrefix(got, "/dev/root/sync/") {
+		t.Errorf("synced dir child mapped to %q", got)
+	}
+}

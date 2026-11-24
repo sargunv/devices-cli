@@ -32,7 +32,7 @@ worktree.`,
 			if err != nil {
 				return err
 			}
-			sdk, err := android.FindSDK()
+			sdk, err := android.FindADB()
 			if err != nil {
 				return err
 			}
