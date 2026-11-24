@@ -1,6 +1,7 @@
 package android
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sargunv/devices-cli/internal/remote"
 	"github.com/sargunv/devices-cli/internal/state"
 )
 
@@ -315,5 +317,114 @@ printf '%s\n' "$*" >> "$(dirname "$0")/profiles"
 		if !strings.Contains(string(calls), want+"\n") {
 			t.Fatalf("missing %s in %s", want, calls)
 		}
+	}
+}
+
+func TestFindADBFallsBackToPath(t *testing.T) {
+	bin := t.TempDir()
+	writeScript(t, filepath.Join(bin, "adb"), fakeADB)
+	t.Setenv("ANDROID_HOME", "")
+	t.Setenv("ANDROID_SDK_ROOT", "")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	sdk, err := FindADB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sdk.Root != "" {
+		t.Fatalf("sdk.Root = %q, want empty", sdk.Root)
+	}
+	if err := sdk.Connected(t.Context(), "phone"); err != nil {
+		t.Fatalf("Connected with PATH adb: %v", err)
+	}
+	req := newRequest(t, sdk)
+	if err := req.MatchPin(t.Context(), "phone"); err != nil {
+		t.Fatalf("MatchPin with PATH adb: %v", err)
+	}
+	if err := req.Prepare(t.Context()); err == nil || !strings.Contains(err.Error(), "no Android SDK") {
+		t.Fatalf("Prepare without ANDROID_HOME = %v, want no Android SDK error", err)
+	}
+}
+
+func TestExecPushesTreesWithoutShellStdin(t *testing.T) {
+	bin := t.TempDir()
+	device := t.TempDir()
+	adb := filepath.Join(bin, "adb")
+	writeScript(t, adb, `#!/bin/sh
+set -eu
+[ "$1" = -s ] && shift 2
+case "$1" in
+  push)
+    src=$2
+    dest=$(printf '%s' "$3" | sed "s|/data/local/tmp/devices-cli|`+device+`|g")
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+    ;;
+  shell)
+    shift
+    if [ "$(wc -c)" -ne 0 ]; then
+      echo "adb shell received unexpected stdin" >&2
+      exit 99
+    fi
+    script=$(printf '%s' "$*" | sed "s|/data/local/tmp/devices-cli|`+device+`|g")
+    exec /bin/sh -c "$script" < /dev/null
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`)
+
+	host := t.TempDir()
+	program := filepath.Join(host, "run.sh")
+	syncedFile := filepath.Join(host, "payload.sh")
+	syncedDir := filepath.Join(host, "pkg")
+	writeScript(t, program, "#!/bin/sh\necho \"$(\"$1\") $(cat \"$PKG_DIR/msg.txt\")\"\n")
+	writeScript(t, syncedFile, "#!/bin/sh\necho hello\n")
+	if err := os.MkdirAll(syncedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(syncedDir, "msg.txt"), []byte("world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	sdk := SDK{ADB: adb}
+	status, err := sdk.Exec(
+		t.Context(),
+		"phone",
+		host,
+		remote.Spec{
+			Program: program,
+			Args:    []string{syncedFile},
+			Env:     map[string]string{"PKG_DIR": syncedDir},
+			Syncs:   []string{syncedFile, syncedDir},
+			Dir:     syncedDir,
+			Stdout:  &stdout,
+			Stderr:  &stderr,
+		},
+		func(string) (func(), error) { return func() {}, nil },
+	)
+	if err != nil {
+		t.Fatalf("Exec failed: %v (stderr: %s)", err, stderr.String())
+	}
+	if status != 0 {
+		t.Fatalf("Exec exited %d (stderr: %s)", status, stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "hello world" {
+		t.Fatalf("stdout = %q, want %q", got, "hello world")
+	}
+	// Make sure no temporary tar archive was left behind on the device.
+	err = filepath.WalkDir(device, func(p string, _ os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if strings.HasSuffix(p, ".tar") {
+			t.Errorf("leftover archive on device: %s", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

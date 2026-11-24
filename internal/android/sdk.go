@@ -14,9 +14,11 @@ import (
 	"time"
 )
 
-// SDK is an Android SDK installation.
+// SDK is an Android SDK installation, or just an adb executable on PATH when
+// Root is empty.
 type SDK struct {
 	Root string
+	ADB  string
 }
 
 // FindSDK returns the SDK that ANDROID_HOME or ANDROID_SDK_ROOT names.
@@ -32,7 +34,39 @@ func FindSDK() (SDK, error) {
 	return SDK{}, errors.New("no Android SDK: set ANDROID_HOME to the SDK directory (a project usually sets it in its mise environment)")
 }
 
-func (s SDK) adbPath() string      { return filepath.Join(s.Root, "platform-tools", "adb") }
+// FindADB returns an SDK that can run adb: from ANDROID_HOME or
+// ANDROID_SDK_ROOT when set, otherwise from adb on PATH. An SDK without Root
+// can use assigned physical devices, while starting an emulator still needs an
+// SDK.
+func FindADB() (SDK, error) {
+	for _, env := range []string{"ANDROID_HOME", "ANDROID_SDK_ROOT"} {
+		if root := os.Getenv(env); root != "" {
+			if info, err := os.Stat(root); err != nil || !info.IsDir() {
+				return SDK{}, fmt.Errorf("%s is %s, which is not a directory", env, root)
+			}
+			adb, _ := exec.LookPath("adb")
+			return SDK{Root: root, ADB: adb}, nil
+		}
+	}
+	if adb, err := exec.LookPath("adb"); err == nil {
+		return SDK{ADB: adb}, nil
+	}
+	return SDK{}, errors.New("no Android SDK or adb: set ANDROID_HOME to the SDK directory, or put adb on PATH")
+}
+
+func (s SDK) adbPath() string {
+	if s.Root != "" {
+		sdkADB := filepath.Join(s.Root, "platform-tools", "adb")
+		if s.ADB == "" {
+			return sdkADB
+		}
+		if _, err := os.Stat(sdkADB); err == nil {
+			return sdkADB
+		}
+	}
+	return s.ADB
+}
+
 func (s SDK) emulatorPath() string { return filepath.Join(s.Root, "emulator", "emulator") }
 
 func (s SDK) has(pkg []string) bool {

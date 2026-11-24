@@ -24,7 +24,7 @@ type Spec struct {
 	Args    []string
 	// Env holds the variables to forward, by name, with their host values.
 	Env map[string]string
-	// Syncs are absolute host directories to copy to the device.
+	// Syncs are absolute host files or directories to copy to the device.
 	Syncs []string
 	// Dir is the host working directory.
 	Dir string

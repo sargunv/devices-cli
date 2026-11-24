@@ -159,7 +159,7 @@ request with the same flags. devices-cli sets -avd, -port, -read-only,
 			if err := req.Validate(); err != nil {
 				return nil, err
 			}
-			sdk, err := android.FindSDK()
+			sdk, err := android.FindADB()
 			if err != nil {
 				return nil, err
 			}

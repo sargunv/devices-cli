@@ -39,20 +39,21 @@ starting the device as get does, and exit with the program's exit status.
 
 The program's output goes to stdout and stderr; devices-cli's own messages go
 to stderr. --env forwards host environment variables, by name or glob. --sync
-copies a host directory to the device, and --sync-env copies the directory
-that a variable names and forwards the variable. A forwarded value, an
-argument, or the working directory that is a synced path, or lies inside one,
-becomes the path of its copy. Copies are named for their contents, so an
-unchanged program or directory is not copied again. Symbolic links are copied
-as what they point to, and version control directories and directories with a
-CACHEDIR.TAG, such as Cargo's target directory, are left out.
+copies a host file or directory to the device, and --sync-env copies the file
+or directory that a variable names and forwards the variable. A forwarded
+value, an argument, or the working directory that is a synced path, or lies
+inside one, becomes the path of its copy. Copies are named for their contents,
+so an unchanged program, file or directory is not copied again. Symbolic links
+are copied as what they point to, and version control directories and
+directories with a CACHEDIR.TAG, such as Cargo's target directory, are left
+out.
 
 Apple simulators, FreeBSD VMs and Wine prefixes see the host's paths, so
 nothing is copied there, and a Wine program sees the host's environment too;
-the program and the synced directories of a FreeBSD VM must lie in the
-worktree, which the VM mounts. A simulator starts the program in its own data
-directory, not the working directory. On OpenHarmony and HarmonyOS, the
-program's stdout arrives a line behind, and its stderr after it exits.
+the program and the synced paths of a FreeBSD VM must lie in the worktree,
+which the VM mounts. A simulator starts the program in its own data directory,
+not the working directory. On OpenHarmony and HarmonyOS, the program's stdout
+arrives a line behind, and its stderr after it exits.
 
 exec works as Cargo's target runner, which appends the program and its
 arguments to the command. End the runner with --, so that the program's
@@ -62,8 +63,8 @@ flags are not taken for devices-cli's.`,
     cargo test --target aarch64-linux-android`,
 	}
 	flags.bind(cmd)
-	cmd.PersistentFlags().StringArrayVar(&ef.sync, "sync", nil, "host directory to copy to the device (repeatable)")
-	cmd.PersistentFlags().StringArrayVar(&ef.syncEnv, "sync-env", nil, "variable that names a host directory to copy to the device; the variable is forwarded (repeatable)")
+	cmd.PersistentFlags().StringArrayVar(&ef.sync, "sync", nil, "host file or directory to copy to the device (repeatable)")
+	cmd.PersistentFlags().StringArrayVar(&ef.syncEnv, "sync-env", nil, "variable that names a host file or directory to copy to the device; the variable is forwarded (repeatable)")
 	cmd.PersistentFlags().StringArrayVar(&ef.env, "env", nil, "host variable to forward, by name or glob such as RUST_* (repeatable)")
 	for _, kind := range a.kindCommands() {
 		sub := &cobra.Command{
@@ -128,7 +129,7 @@ func (ef execFlags) spec(args []string) (remote.Spec, error) {
 	for _, name := range ef.syncEnv {
 		value, ok := os.LookupEnv(name)
 		if !ok || value == "" {
-			return remote.Spec{}, fmt.Errorf("--sync-env %s: %s is not set; set it to the directory to copy", name, name)
+			return remote.Spec{}, fmt.Errorf("--sync-env %s: %s is not set; set it to the file or directory to copy", name, name)
 		}
 		abs, err := filepath.Abs(value)
 		if err != nil {
@@ -142,8 +143,9 @@ func (ef execFlags) spec(args []string) (remote.Spec, error) {
 		if err != nil {
 			return remote.Spec{}, err
 		}
-		if info, err := os.Stat(abs); err != nil || !info.IsDir() {
-			return remote.Spec{}, fmt.Errorf("%s is not a directory; name a directory to sync", d)
+		info, err := os.Stat(abs)
+		if err != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
+			return remote.Spec{}, fmt.Errorf("%s is not a file or directory; name a file or directory to sync", d)
 		}
 		spec.Syncs = append(spec.Syncs, abs)
 	}
